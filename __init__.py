@@ -14,7 +14,9 @@ import os
 import sys
 import uuid
 import time
+import traceback
 import multiprocessing
+
 
 class MULTIPROCESS_PT_panel(bpy.types.Panel):
     bl_label = "Multiprocess"
@@ -27,7 +29,6 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
 
 
 FILENAME = os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_standalone_worker.py")
-FUNCNAME = "mytask"
 
 
 class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
@@ -35,14 +36,27 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
     bl_label = "Launch Multiprocess"
     bl_description = "Start parallel processing"
 
-    TASKS = {
-        'one': {
+    # WARNING:
+    # pass script paths totally indpeendent from bpy!
+    # function and args passed must be pickleable! function must be found on module top level!
+    queue = {
+        0: {
             'script_path': FILENAME,
             'function_name': "mytask",
+            'positional_args': [1,],
+            'keyword_args': {},
         },
-        'two': {
+        1: {
             'script_path': FILENAME,
             'function_name': "mytask",
+            'positional_args': [2,],
+            'keyword_args': {},
+        },
+        2: {
+            'script_path': FILENAME,
+            'function_name': "mytask",
+            'positional_args': [3,],
+            'keyword_args': {},
         }
     }
 
@@ -52,9 +66,9 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         self.pool = None
         self.modal_timer = None
-        self.async_result = None
+        self.result_waiting = None
         self.tmp_sys_paths = []
-        self.queue = []
+        self.queue_idx = 0
 
     def import_task_fct(self, modulefile, function_name):
         """temporarily add module to sys.path, so it can be found by multiprocessing, 
@@ -91,42 +105,38 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         return function_worker
 
     def create_task_queue(self, context):
+        """create a queue of functions to be executed"""
 
-        for k,v in self.TASKS.items():
+        for k,v in self.queue.items():
             function_worker = self.import_task_fct(v['script_path'], v['function_name'])
-            if (function_worker is None):
-                self.queue.append(function_worker)
+            if (function_worker is not None):
+                self.queue[k]['function'] = function_worker
 
         return None
 
     def execute(self, context):
-        print("=== Starting Multiprocessing ===")
+        print("INFO: launch_background_tasks.execute(): Starting multiprocessing..")
         try:
 
             # create the function queue
-            #self.create_task_queue(context)
-            
-            function_worker = self.import_task_fct(FILENAME, FUNCNAME)
-            if (function_worker is None):
+            self.create_task_queue(context)
+            if len(self.queue) == 0:
+                print("ERROR: launch_background_tasks.execute(): No tasks to execute")
                 return {'CANCELLED'}
-            
-            # Use spawn method for safety in GUI applications like Blender
+
+            # start a processing pool
             ctx = multiprocessing.get_context('spawn')
             self.pool = ctx.Pool(2)
 
-
-            self.async_result = self.pool.map_async(function_worker, [1],)
-
             # Start modal operation
-            self.modal_timer = context.window_manager.event_timer_add(1.0, window=context.window)
+            self.modal_timer = context.window_manager.event_timer_add(0.15, window=context.window)
             context.window_manager.modal_handler_add(self)
 
-            print("=== Task Runnign In Background ===")
+            print("INFO: launch_background_tasks.execute(): Running modal..")
             return {'RUNNING_MODAL'}
 
         except Exception as e:
-            print(f"ERROR: Couldn't launch multiprocessing: {e}")
-            import tracebackbackgroundtasks
+            print(f"ERROR: launch_background_tasks.execute(): Error starting multiprocessing: {e}")
             traceback.print_exc()
             return {'CANCELLED'}
 
@@ -136,44 +146,70 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         if (event.type!='TIMER'):
             return {'PASS_THROUGH'}
 
-        if (self.async_result.ready()):
-            print("=== Task Finished ===")
+        # if a queue is empty, it means a task is waiting to be done!
+        if (self.result_waiting is None):
+
+            # if we are at the end of the queue, we can finish the modal
+            if (self.queue_idx >= len(self.queue)):
+                print("INFO: launch_background_tasks.modal(): All tasks finished!")
+                return {'FINISHED'}
+
+            # if not, we start a new task
             try:
-                results = self.async_result.get()
-                print("timer catch multiprocess end")
-                print(f"Results: {results}")
-                self.report({'INFO'}, f"Multiprocessing completed! Results: {results}")
-
+                function_worker = self.queue[self.queue_idx]['function']
+                arg = self.queue[self.queue_idx]['positional_args'][0] #TODO support passing args & kwargs in there...
+                self.result_waiting = self.pool.map_async(function_worker, [arg],)
+                print(f"INFO: launch_background_tasks.modal(): Task{self.queue_idx} started!")
             except Exception as e:
-                print(f"Error getting multiprocessing results: {e}")
-                self.report({'ERROR'}, f"Multiprocessing failed: {str(e)}")
+                print(f"ERROR: launch_background_tasks.modal(): Error starting background task{self.queue_idx}: {e}")
 
-            return {'FINISHED'}
+                traceback.print_exc()
+                return {'CANCELLED'}
+
+            return {'PASS_THROUGH'}
+
+        # do we have a task finished?
+        if (self.result_waiting.ready()):
+            try:
+                results = self.result_waiting.get()
+                print(f"INFO: launch_background_tasks.modal(): Task{self.queue_idx} finished! Results: {results}")
+            except Exception as e:
+                print(f"ERROR: launch_background_tasks.modal(): Error getting multiprocessing results: {e}")
+                return {'CANCELLED'}
+
+            self.queue_idx += 1
+            self.result_waiting = None
+            return {'PASS_THROUGH'}
 
         return {'PASS_THROUGH'}
 
     def cleanup(self, context):
-
-        print("INFO: launch_background_tasks.cleanup() -start")
         #remove timer
         if (self.modal_timer):
             context.window_manager.event_timer_remove(self.modal_timer)
             self.modal_timer = None
+
         #close pool
         if (self.pool):
             self.pool.close()  # No more tasks will be submitted
             self.pool.join()
             self.pool = None
+
         #remove result
-        if (self.async_result):
-            self.async_result = None
+        if (self.result_waiting):
+            self.result_waiting = None
+
+        # reset queue
+        self.queue = []
+        self.queue_idx = 0
+
         #remove temp module from sys.path
         for module_path in self.tmp_sys_paths:
             if (module_path in sys.path):
                 sys.path.remove(module_path)
         self.tmp_sys_paths = []
 
-        print("INFO: launch_background_tasks.cleanup() -end")
+        print("INFO: launch_background_tasks.cleanup(): clean up done")
         return None
 
     def __del__(self):
@@ -185,7 +221,8 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 classes = [
     MULTIPROCESS_OT_launch_background_tasks,
     MULTIPROCESS_PT_panel,
-]
+    ]
+
 
 def register():
     for cls in classes:
