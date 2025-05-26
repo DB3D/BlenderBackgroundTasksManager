@@ -18,6 +18,15 @@ import traceback
 import multiprocessing
 
 
+
+MY_MESSAGE = "Hello There!"
+def update_message(message):
+    global MY_MESSAGE
+    MY_MESSAGE = message
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            area.tag_redraw()
+
 class MULTIPROCESS_PT_panel(bpy.types.Panel):
     bl_label = "Multiprocess"
     bl_idname = "MULTIPROCESS_PT_panel"
@@ -25,8 +34,10 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "Multiprocess"
     def draw(self, context):
-        op = self.layout.operator("multiprocess.launch_background_tasks", text="Launch Multiprocess Modal!!!!", icon='PLAY')
+        layout = self.layout
+        op = layout.operator("multiprocess.launch_background_tasks", text="Launch Multiprocess Modal!!!!", icon='PLAY')
         op.queue_identifier = "my_series_of_tasks"
+        layout.label(text=MY_MESSAGE)
 
 
 FILENAME = os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_standalone_worker.py")
@@ -71,7 +82,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
                 'function_name': "mytask",
                 'function_worker': None,
                 'function_result': None,
-                'result_callback': lambda self, context, result: print(f"INFO: callback! {result} for index {self.qidx}"),
+                'result_callback': lambda self, context, result: update_message("Very Nice!"),
             },
             1: {
                 'script_path': FILENAME,
@@ -80,7 +91,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
                 'function_name': "mytask",
                 'function_worker': None,
                 'function_result': None,
-                'result_callback': lambda self, context, result: print(f"INFO: callback! {result} for index {self.qidx}"),
+                'result_callback': lambda self, context, result: update_message("King of the Castle!"),
             },
             2: {
                 'script_path': FILENAME,
@@ -89,7 +100,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
                 'function_name': "mytask",
                 'function_worker': None,
                 'function_result': None,
-                'result_callback': lambda self, context, result: print(f"INFO: callback! {result} for index {self.qidx}"),
+                'result_callback': lambda self, context, result: update_message("Done!"),
             }
         }
     }
