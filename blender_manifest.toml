@@ -1,0 +1,12 @@
+schema_version = "1.0.0"
+id = "simple_multiprocess_addon"
+name = "Simple Multiprocess Addon"
+version = "1.0.0"
+tagline = "Clean multiprocessing example for Blender"
+maintainer = "Assistant"
+type = "add-on"
+tags = ["System", "Multiprocessing", "Example"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+website = "proot.com"
+copyright = ["2024 Multiprocess Example"] 
