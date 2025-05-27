@@ -52,7 +52,6 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
     Use the queue_identifier to specify which queue to use. and define the class.queues map before calling the operator.
     Note that if an error occues, the whole queue will be cancelled.
     """
-
     bl_idname = "multiprocess.launch_background_tasks"
     bl_label = "Launch Multiprocess"
     bl_description = "Start parallel processing"
@@ -65,63 +64,70 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
     # NOTE: about the queues parameter:
     #
     # Usage:
-    #   change MULTIPROCESS_OT_launch_background_tasks.queues dict before calling the operation to add your own tasks!
+    #   change cls.queues dict before calling the operation to add your own tasks!
     #   make sure to set self.queue_identifier and that this value is present in the queue dict.
     #
     # Expected format:
-    #    <queueidentifier>: {   NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
+    #    <queueidentifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
     #       <taskindex>: {       NOTE: The task index, int starting at 0.
-    #           'script_path': <path/to/script.py>,              NOTE: The script path where your function is located. This module shall be totally indpeendent from blender!
-    #           'positional_args': [<args_value>],               NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
-    #           'keyword_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'RESULTS|<taskindex>|<result_index>'
-    #           'function_name': "<function_name>",              NOTE: The name of the function you wish to execute in background
+    #           'task_script_path': <path/to/script.py>,         NOTE: The script path where your function is located. This module shall be totally indpeendent from blender!
+    #           'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
+    #           'task_kw_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'USE_TASK_RESULT|<taskindex>|<result_index>'
+    #           'task_fn_name': "<task_fn_name>",                NOTE: The name of the function you wish to execute in background
     #                                                                  the function must be pickleable and found on module top level!
-    #           'function_worker': <function>,                   NOTE: We'll import and add the function to this emplacement. Just set it to None!
-    #           'function_result': <tuple>,                      NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
-    #           'callback_pre':    <function>,                   NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
-    #           'callback_post':   <function>,                         callbacks will never execute in background, it will be called in the main thread. 
+    #           'task_fn_worker': <function>,                    NOTE: We'll import and add the function to this emplacement. Just set it to None!
+    #           'task_result': <tuple>,                          NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
+    #           'task_callback_pre':    <function>,              NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
+    #           'task_callback_post':   <function>,                    callbacks will never execute in background, it will be called in the main thread. 
     #       },                                                         thereforr it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
 
     queues = {
         "my_series_of_tasks" : {
             0: {
-                'script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
-                'positional_args': [3],  # First positional arg for mytask(v, printhis=None)
-                'keyword_args': {},  # Keyword argument
-                'function_name': "mytask",
-                'function_worker': None,
-                'function_result': None,
-                'callback_pre': lambda self, context: print("callback_pre..."),
-                'callback_post': lambda self, context, result: update_message("Very Nice!"),
+                'task_script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
+                'task_pos_args': [3,],
+                'task_kw_args': {},
+                'task_fn_name': "mytask",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
+                'task_callback_post': lambda self, context, result: update_message("Very Nice!"),
             },
             1: {
-                'script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
-                'positional_args': ['RESULTS|0|0',], #SpecialNotation: Use result from task 0, index 0
-                'keyword_args': {"printhis": "Hello There!"},
-                'function_name': "mytask",
-                'function_worker': None,
-                'function_result': None,
-                'callback_pre': lambda self, context: print("callback_pre..."),
-                'callback_post': lambda self, context, result: update_message("King of the Castle!"),
+                'task_script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
+                'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, index 0
+                'task_kw_args': {"printhis": "Hello There!"},
+                'task_fn_name': "mytask",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
+                'task_callback_post': lambda self, context, result: update_message("King of the Castle!"),
             },
             2: {
-                'script_path': os.path.join(BACKGROUND_TASKS_DIR, "another_test.py"),
-                'positional_args': ['RESULTS|1|0'],  #SpecialNotation: Use result from task 1, index 0
-                'keyword_args': {},
-                'function_name': "myfoo",
-                'function_worker': None,
-                'function_result': None,
-                'callback_pre': lambda self, context: print("callback_pre..."),
-                'callback_post': lambda self, context, result: update_message("Done!"),
+                'task_script_path': os.path.join(BACKGROUND_TASKS_DIR, "another_test.py"),
+                'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, index 0
+                'task_kw_args': {},
+                'task_fn_name': "myfoo",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
+                'task_callback_post': lambda self, context, result: update_message("Done!"),
             }
         }
     }
 
-    callback_fatal_error = None #NOTE: function to call when a fatal error occured and we need to cancel the whole queue.
-                                # excepted signature: (self, context)
+    #NOTE: More optional callbacks.. 
+    #NOTE: excepted signature for all callbacks below: (self, context) & return None
+    #NOTE: This callback could be used to build self.queues[self.queue_identifier][..][..] if needed.
+    callback_before_queue = lambda self, context: print("Callback: Before queue")
+    #NOTE: This callback is to be used to handle the queue after it has been successfully executed.
+    callback_after_queue = lambda self, context: print("Callback: After queue") 
+    #NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue.
+    callback_fatal_error = lambda self, context: print("Callback: Fatal error occurred!") 
 
-    def __init__(self, *args, **kwargs):        
-        print("INFO: MULTIPROCESS_OT_launch_background_tasks.__init__()")
+    def __init__(self, *args, **kwargs):
+        
+        print("INFO: launch_background_tasks.__init__()")
         super().__init__(*args, **kwargs)
 
         self._pool = None #the multiprocessing pool, used to run the tasks in parallel.
@@ -173,15 +179,15 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         valid_worker_found = 0
         for k,v in self.qactive.items():
-            function_worker = self.import_worker_fct(v['script_path'], v['function_name'])
+            function_worker = self.import_worker_fct(v['task_script_path'], v['task_fn_name'])
             if (function_worker is not None):
-                self.qactive[k]['function_worker'] = function_worker
+                self.qactive[k]['task_fn_worker'] = function_worker
                 valid_worker_found += 1
 
         return valid_worker_found
 
     def resolve_params_notation(self, paramargs):
-        """Resolve result references in args/kwargs, when using the 'RESULTS|<taskindex>|<result_index>' notation for a value."""
+        """Resolve result references in args/kwargs, when using the 'USE_TASK_RESULT|<taskindex>|<result_index>' notation for a value."""
         
         def resolve_notation(notation):
             """Resolve a single result reference."""
@@ -194,11 +200,11 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             result_idx = int(parts[2])
             if (task_idx not in self.qactive):
                 raise ValueError(f"ERROR: resolve_notation(): Task index {task_idx} not found in queue: {self.qactive}")
-            result = self.qactive[task_idx]['function_result']
+            result = self.qactive[task_idx]['task_result']
             if (result is None):
                 raise ValueError(f"ERROR: resolve_notation(): Task{task_idx} results are None! Perhaps it's not ready yet, or perhaps this task return None.")
             try:
-                value = self.qactive[task_idx]['function_result'][result_idx]
+                value = self.qactive[task_idx]['task_result'][result_idx]
             except Exception as e:
                 raise ValueError(f"ERROR: resolve_notation(): Invalid result index: {result_idx} for task {task_idx}: {e}")
             return value
@@ -207,7 +213,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             case list():
                 resolved = []
                 for value in paramargs:
-                    if (isinstance(value, str) and value.startswith('RESULTS|')):
+                    if (isinstance(value, str) and value.startswith('USE_TASK_RESULT|')):
                             resolved.append(resolve_notation(value))
                     else: resolved.append(value)
                 return resolved
@@ -215,7 +221,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             case dict():
                 resolved = {}
                 for key, value in paramargs.items():
-                    if (isinstance(value, str) and value.startswith('RESULTS|')):
+                    if (isinstance(value, str) and value.startswith('USE_TASK_RESULT|')):
                             resolved[key] = resolve_notation(value)
                     else: resolved[key] = value
                 return resolved
@@ -225,7 +231,10 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
     def execute(self, context):
         print("INFO: launch_background_tasks.execute(): Starting multiprocessing..")
-        try:
+        try:            
+            #call the callback_before_queue function, if exists
+            self.exec_callback(context, 'callback_before_queue')
+
             #make sure the queue identifier is set..
             if (self.queue_identifier not in self.queues):
                 print(f"ERROR: launch_background_tasks.execute(): Queue identifier {self.queue_identifier} not found in queue dict.")
@@ -261,33 +270,29 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         
         match callback_identifier:
 
-            case 'callback_post':
-                callback = self.qactive[self.qidx].get('callback_post', None)
+            case 'task_callback_post' | 'task_callback_pre':
+                callback = self.qactive[self.qidx].get(callback_identifier, None)
                 if (callback is not None):
-                    print(f"INFO: launch_background_tasks.exec_callback(): Calling Task{self.qidx} 'callback_post'...")
-                    try:
-                        callback(self, context, self.qactive[self.qidx]['function_result'])
+                    print(f"INFO: launch_background_tasks.exec_callback(): Calling Task{self.qidx} '{callback_identifier}'...")
+                    args = (self, context,)
+                    if (callback_identifier=='task_callback_post'):
+                        args += (self.qactive[self.qidx]['task_result'],)
+                    try: callback(*args)
                     except Exception as e:
-                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling Task{self.qidx} 'callback_post': {e}")
+                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling Task{self.qidx} '{callback_identifier}': {e}")
 
-            case 'callback_pre':
-                callback = self.qactive[self.qidx].get('callback_pre', None)
+            case 'callback_fatal_error' | 'callback_before_queue' | 'callback_after_queue':
+                callback = getattr(self, callback_identifier, None)
                 if (callback is not None):
-                    print(f"INFO: launch_background_tasks.exec_callback(): Calling Task{self.qidx} 'callback_pre'...")
-                    try:
-                        callback(self, context)
+                    print(f"INFO: launch_background_tasks.exec_callback(): Calling '{callback_identifier}'...")
+                    args = (context,) #self already included..
+                    try: callback(*args)
                     except Exception as e:
-                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling Task{self.qidx} 'callback_pre': {e}")
-                        
-            case 'callback_fatal_error':
-                if (self.callback_fatal_error is not None):
-                    print(f"INFO: launch_background_tasks.exec_callback(): Calling 'callback_fatal_error'...")
-                    callback = self.callback_fatal_error
-                    try:
-                        callback(self, context)
-                    except Exception as e:
-                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling 'callback_fatal_error': {e}")
-                
+                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling '{callback_identifier}': {e}")
+
+            case _:
+                print(f"ERROR: launch_background_tasks.exec_callback(): Invalid callback identifier: {callback_identifier}")
+
         return None
 
     def start_task(self, context) -> bool:
@@ -295,21 +300,21 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         return True if the task was started successfully, False otherwise."""
 
         try:
-            function_worker = self.qactive[self.qidx]['function_worker']
+            function_worker = self.qactive[self.qidx]['task_fn_worker']
             if (function_worker is None):
                 print(f"ERROR: launch_background_tasks.start_task(): Function worker task{self.qidx} was not found!")
                 return False
 
             # get the arguments we need to pass to the function
-            args = self.qactive[self.qidx]['positional_args']
-            kwargs = self.qactive[self.qidx]['keyword_args']
+            args = self.qactive[self.qidx]['task_pos_args']
+            kwargs = self.qactive[self.qidx]['task_kw_args']
 
             # Resolve any result references in args and kwargs
             resolved_args = self.resolve_params_notation(args) if args else []
             resolved_kwargs = self.resolve_params_notation(kwargs) if kwargs else {}
 
-            # call the callback_pre function, if exists
-            self.exec_callback(context, 'callback_pre')
+            # call the task_callback_pre function, if exists
+            self.exec_callback(context, 'task_callback_pre')
 
             # Use apply_async instead of map_async - it handles multiple args and kwargs naturally
             self._awaiting_result = self._pool.apply_async(function_worker, resolved_args, resolved_kwargs)
@@ -333,7 +338,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             if (not isinstance(result, tuple)):
                 result = (result,)
             
-            self.qactive[self.qidx]['function_result'] = result
+            self.qactive[self.qidx]['task_result'] = result
 
             print(f"INFO: launch_background_tasks.store_task_result(): Task{self.qidx} finished! Results: {result}")
             return True
@@ -349,7 +354,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         if (event.type!='TIMER'):
             return {'PASS_THROUGH'}
 
-        print("running")
+        # print("running")
 
         # if a queue is empty, it means a task is waiting to be done!
         if (self._awaiting_result is None):
@@ -389,7 +394,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
                 return {'FINISHED'}
 
             # handle callback functions if exists..
-            self.exec_callback(context, 'callback_post')
+            self.exec_callback(context, 'task_callback_post')
 
             # set up environement for the next task
             self.qidx += 1
@@ -406,7 +411,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         print("INFO: launch_background_tasks.finish(): All tasks finished! Results:")
         for k,v in self.qactive.items():
-            print(f"     Task{k}: {v['function_result']}")
+            print(f"     Task{k}: {v['task_result']}")
 
         return None
         
@@ -415,7 +420,8 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         #callback if something went wrong
         if (not self._successfully_finished):
-            self.exec_callback(context, 'callback_fatal_error')
+              self.exec_callback(context, 'callback_fatal_error')
+        else: self.exec_callback(context, 'callback_after_queue')
 
         #remove timer
         if (self._modal_timer):
