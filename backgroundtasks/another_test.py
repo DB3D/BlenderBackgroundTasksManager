@@ -3,20 +3,19 @@
 
 import time
 
-def mytask(v, printhis=None):
+def myfoo(v,):
     """Simple test function for parallel processing"""
 
-    print(f"Processing mytask({v})")
+    print(f"Processing myfoo({v})")
     
     time.sleep(1.5)  # Simulate work
     
-    if (printhis is not None):
-        print(f"Printing this: {printhis}")
-        return v * 2, 2222
+    for i in range(v):
+        print("Heyooo")
     
-    print(f"Completed mytask({v})")
-    return v * 2
+    print(f"Completed myfoo({v})")
+    return None
 
 # Test the function by executing this script directly?
 if __name__ == "__main__":
-    result = mytask(5)
+    result = myfoo(5)

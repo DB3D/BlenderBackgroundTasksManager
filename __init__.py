@@ -20,7 +20,9 @@ import multiprocessing
 
 
 MY_MESSAGE = "Hello There!"
+
 def update_message(message):
+
     global MY_MESSAGE
     MY_MESSAGE = message
     for window in bpy.context.window_manager.windows:
@@ -28,11 +30,13 @@ def update_message(message):
             area.tag_redraw()
 
 class MULTIPROCESS_PT_panel(bpy.types.Panel):
+
     bl_label = "Multiprocess"
     bl_idname = "MULTIPROCESS_PT_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Multiprocess"
+
     def draw(self, context):
         layout = self.layout
         op = layout.operator("multiprocess.launch_background_tasks", text="Launch Multiprocess Modal!!!!", icon='PLAY')
@@ -40,7 +44,7 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
         layout.label(text=MY_MESSAGE)
 
 
-FILENAME = os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_standalone_worker.py")
+BACKGROUND_TASKS_DIR = os.path.join(os.path.dirname(__file__), "backgroundtasks")
 
 
 class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
@@ -51,56 +55,60 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
     queue_identifier : bpy.props.StringProperty(
         default="",
-        description="Identifier for the process, in order to retrieve queue instruction for this process in cls.queue",
+        description="Identifier for the process, in order to retrieve queue instruction for this process in cls.queues",
         )
 
-    # NOTE: about the queue parameter:
+    # NOTE: about the queues parameter:
     #
     # Usage:
-    # change MULTIPROCESS_OT_launch_background_tasks.queue dict before calling the operation to add your own tasks!
-    # make sure to set self.queue_identifier and that this value is present in the queue dict.
+    #   change MULTIPROCESS_OT_launch_background_tasks.queues dict before calling the operation to add your own tasks!
+    #   make sure to set self.queue_identifier and that this value is present in the queue dict.
     #
     # Expected format:
-    #  <identifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
-    #     <index>: {      NOTE: The task index, int starting at 0.
-    #         'script_path': <path to script>,                 NOTE: the script path where your function is located. This module shall be totally indpeendent from blender!
-    #         'positional_args': [<args>],                     NOTE: these values must be pickeable (bpy independant)!
-    #         'keyword_args': {'<kwarg_name>': <kwarg_value>}, NOTE: same here
-    #         'function_name': "<function_name>",              NOTE: the name of the function you wish to execute in background
-    #                                                                function must be pickleable and found on module top level!
-    #         'function_worker': <function_worker>,            NOTE: we'll import and add the function to this emplacement. set it to None.
-    #         'function_result': <function_result>,            NOTE: once the function is finished, we'll catch the result and place it here.
-    #         'result_callback': <result_callback>,            NOTE: the function to call when the result is ready. args are: (self, context, result) and the function shall return None. 
-    #     },                                                         this callback will NOT execute in the main thread, it will be called in the background thread. 
-    #                                                                it will block blender UI and can have access to bpy.
-    queue = {
+    #    <queueidentifier>: {   NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
+    #       <taskindex>: {      NOTE: The task index, int starting at 0.
+    #           'script_path': <path to script>,                 NOTE: the script path where your function is located. This module shall be totally indpeendent from blender!
+    #           'positional_args': [<args>],                     NOTE: arguments to pass to the function. These values must be pickeable (bpy independant)!
+    #           'keyword_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a preview task, use notation 'RESULTS|<taskindex>|<result_index>'
+    #           'function_name': "<function_name>",              NOTE: the name of the function you wish to execute in background
+    #                                                                  function must be pickleable and found on module top level!
+    #           'function_worker': <function>,                   NOTE: we'll import and add the function to this emplacement. set it to None.
+    #           'function_result': <tuple>,                      NOTE: once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
+    #           'callback_pre':    <function>,                   NOTE: the function to call when the result is ready. args are: (self, context, result) and the function shall return None. 
+    #           'callback_post':   <function>,                         callbacks will never execute in the main thread, it will be called in the background thread. 
+    #       },                                                         it will block blender UI and can have access to bpy.
+
+    queues = {
         "my_series_of_tasks" : {
             0: {
-                'script_path': FILENAME,
-                'positional_args': [1,],
-                'keyword_args': {},
+                'script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
+                'positional_args': [3],  # First positional arg for mytask(v, printhis=None)
+                'keyword_args': {},  # Keyword argument
                 'function_name': "mytask",
                 'function_worker': None,
                 'function_result': None,
-                'result_callback': lambda self, context, result: update_message("Very Nice!"),
+                'callback_pre': lambda self, context: print("callback_pre..."),
+                'callback_post': lambda self, context, result: update_message("Very Nice!"),
             },
             1: {
-                'script_path': FILENAME,
-                'positional_args': [2,],
-                'keyword_args': {},
+                'script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
+                'positional_args': ['RESULTS|0|0',], #SpecialNotation: Use result from task 0, index 0
+                'keyword_args': {"printhis": "Hello There!"},
                 'function_name': "mytask",
                 'function_worker': None,
                 'function_result': None,
-                'result_callback': lambda self, context, result: update_message("King of the Castle!"),
+                'callback_pre': lambda self, context: print("callback_pre..."),
+                'callback_post': lambda self, context, result: update_message("King of the Castle!"),
             },
             2: {
-                'script_path': FILENAME,
-                'positional_args': [3,],
+                'script_path': os.path.join(BACKGROUND_TASKS_DIR, "another_test.py"),
+                'positional_args': ['RESULTS|1|0'],  #SpecialNotation: Use result from task 1, index 0
                 'keyword_args': {},
-                'function_name': "mytask",
+                'function_name': "myfoo",
                 'function_worker': None,
                 'function_result': None,
-                'result_callback': lambda self, context, result: update_message("Done!"),
+                'callback_pre': lambda self, context: print("callback_pre..."),
+                'callback_post': lambda self, context, result: update_message("Done!"),
             }
         }
     }
@@ -114,7 +122,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         self._awaiting_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
         self._tmp_sys_paths = [] #a list of module paths that were added to sys.path, nead a cleanup when not needed anymore.
         
-        self.qactive = False #the queue, a dict of tasks of worker functions to be executed
+        self.qactive = False #the queue of tasks corresponding to the queue identifier, a dict of tasks of worker functions to be executed
         self.qidx = 0 #the current index of the task that is being executed
 
     def import_worker_fct(self, modulefile, function_name):
@@ -164,14 +172,57 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         return valid_worker_found
 
+    def resolve_params_notation(self, paramargs):
+        """Resolve result references in args/kwargs, when using the 'RESULTS|<taskindex>|<result_index>' notation for a value."""
+        
+        def resolve_notation(notation):
+            """Resolve a single result reference."""
+            
+            parts = notation.split('|')
+            if (len(parts) != 3):
+                raise ValueError(f"ERROR: resolve_notation(): Invalid reference notation: {notation}")
+            
+            task_idx = int(parts[1])
+            result_idx = int(parts[2])
+            if (task_idx not in self.qactive):
+                raise ValueError(f"ERROR: resolve_notation(): Task index {task_idx} not found in queue: {self.qactive}")
+            result = self.qactive[task_idx]['function_result']
+            if (result is None):
+                raise ValueError(f"ERROR: resolve_notation(): Task{task_idx} results are None! Perhaps it's not ready yet, or perhaps this task return None.")
+            try:
+                value = self.qactive[task_idx]['function_result'][result_idx]
+            except Exception as e:
+                raise ValueError(f"ERROR: resolve_notation(): Invalid result index: {result_idx} for task {task_idx}: {e}")
+            return value
+        
+        match paramargs:
+            case list():
+                resolved = []
+                for value in paramargs:
+                    if (isinstance(value, str) and value.startswith('RESULTS|')):
+                            resolved.append(resolve_notation(value))
+                    else: resolved.append(value)
+                return resolved
+            
+            case dict():
+                resolved = {}
+                for key, value in paramargs.items():
+                    if (isinstance(value, str) and value.startswith('RESULTS|')):
+                            resolved[key] = resolve_notation(value)
+                    else: resolved[key] = value
+                return resolved
+            
+            case _:
+                raise ValueError(f"ERROR: resolve_params_notation(): Invalid argument type: {type(paramargs)} for task {self.qidx}")
+
     def execute(self, context):
         print("INFO: launch_background_tasks.execute(): Starting multiprocessing..")
         try:
             #make sure the queue identifier is set..
-            if (self.queue_identifier not in self.queue):
+            if (self.queue_identifier not in self.queues):
                 print(f"ERROR: launch_background_tasks.execute(): Queue identifier {self.queue_identifier} not found in queue dict.")
                 return {'CANCELLED'}
-            self.qactive = self.queue[self.queue_identifier]
+            self.qactive = self.queues[self.queue_identifier]
 
             # create the function queue
             valid_worker_found = self.collect_worker_fcts(context)
@@ -203,9 +254,20 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             if (function_worker is None):
                 print(f"ERROR: launch_background_tasks.start_task(): Function worker task{self.qidx} was not found!")
                 return False
-        
-            arg = self.qactive[self.qidx]['positional_args'][0] #TODO support passing args & kwargs in there...
-            self._awaiting_result = self._pool.map_async(function_worker, [arg],)
+
+            # get the arguments we need to pass to the function
+            args = self.qactive[self.qidx]['positional_args']
+            kwargs = self.qactive[self.qidx]['keyword_args']
+
+            # Resolve any result references in args and kwargs
+            resolved_args = self.resolve_params_notation(args) if args else []
+            resolved_kwargs = self.resolve_params_notation(kwargs) if kwargs else {}
+
+            # call the callback_pre function, if exists
+            self.call_callback(context, 'callback_pre')
+
+            # Use apply_async instead of map_async - it handles multiple args and kwargs naturally
+            self._awaiting_result = self._pool.apply_async(function_worker, resolved_args, resolved_kwargs)
         
             print(f"INFO: launch_background_tasks.start_task(): Task{self.qidx} started!")
             return True
@@ -214,27 +276,51 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             print(f"ERROR: launch_background_tasks.start_task(): Error starting background task{self.qidx}: {e}")
             traceback.print_exc()
             return False
-    
+
     def store_task_result(self, context) -> bool:
         """store the result of the task in the queue.
         return True if the result was stored successfully, False otherwise."""
 
         try:
-            async_results = self._awaiting_result.get()
-            if (async_results is None):
-                print(f"ERROR: launch_background_tasks.store_task_result(): Task{self.qidx} finished with no results! Cancelling...")
-                return False
+            result = self._awaiting_result.get()
 
-            results = async_results[0] #async is always returning a list of results, even if there is only one result
-            self.qactive[self.qidx]['function_result'] = results
+            # Ensure result is always stored as a tuple for consistent indexing
+            if (not isinstance(result, tuple)):
+                result = (result,)
+            
+            self.qactive[self.qidx]['function_result'] = result
 
-            print(f"INFO: launch_background_tasks.store_task_result(): Task{self.qidx} finished! Results: {results}")
+            print(f"INFO: launch_background_tasks.store_task_result(): Task{self.qidx} finished! Results: {result}")
             return True
             
         except Exception as e:
             print(f"ERROR: launch_background_tasks.store_task_result(): Error getting multiprocessing results: {e}")
             traceback.print_exc()
             return False
+
+    def call_callback(self, context, callback_identifier=None,):
+        """call the callback function for the current task."""
+        
+        match callback_identifier:
+
+            case 'callback_post':
+                callback = self.qactive[self.qidx].get('callback_post', None)
+                if (callback is not None):
+                    print(f"INFO: launch_background_tasks.modal(): Calling Task{self.qidx} result callback...")
+                    try:
+                        callback(self, context, self.qactive[self.qidx]['function_result'])
+                    except Exception as e:
+                        print(f"ERROR: launch_background_tasks.modal(): Error calling Task{self.qidx} result callback: {e}")
+
+            case 'callback_pre':
+                callback = self.qactive[self.qidx].get('callback_pre', None)
+                if (callback is not None):
+                    print(f"INFO: launch_background_tasks.modal(): Calling Task{self.qidx} pre callback...")
+                    try:
+                        callback(self, context)
+                    except Exception as e:
+                        print(f"ERROR: launch_background_tasks.modal(): Error calling Task{self.qidx} pre callback: {e}")
+        return None
 
     def modal(self, context, event):
 
@@ -258,19 +344,13 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         # do we have a task finished? get the results
         if (self._awaiting_result.ready()):
-            
+
             succeeeded = self.store_task_result(context)
             if (not succeeeded):
                 return {'CANCELLED'}
-            
-            # does this task has a result callback? if yes call it..
-            callback = self.qactive[self.qidx].get('result_callback', None)
-            if (callback is not None):
-                print(f"INFO: launch_background_tasks.modal(): Calling Task{self.qidx} result callback...")
-                try:
-                    callback(self, context, self.qactive[self.qidx]['function_result'])
-                except Exception as e:
-                    print(f"ERROR: launch_background_tasks.modal(): Error calling Task{self.qidx} result callback: {e}")
+
+            # handle callback functions if exists..
+            self.call_callback(context, 'callback_post')
 
             # set up environement for the next task
             self.qidx += 1
@@ -297,7 +377,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         #close processing pool
         if (self._pool):
-            self._pool.close()  # No more tasks will be submitted
+            self._pool.close()
             self._pool.join()
             self._pool = None
 
