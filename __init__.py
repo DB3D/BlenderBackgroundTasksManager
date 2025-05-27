@@ -70,17 +70,17 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
     #
     # Expected format:
     #    <queueidentifier>: {   NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
-    #       <taskindex>: {      NOTE: The task index, int starting at 0.
-    #           'script_path': <path to script>,                 NOTE: the script path where your function is located. This module shall be totally indpeendent from blender!
-    #           'positional_args': [<args>],                     NOTE: arguments to pass to the function. These values must be pickeable (bpy independant)!
-    #           'keyword_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a preview task, use notation 'RESULTS|<taskindex>|<result_index>'
-    #           'function_name': "<function_name>",              NOTE: the name of the function you wish to execute in background
-    #                                                                  function must be pickleable and found on module top level!
-    #           'function_worker': <function>,                   NOTE: we'll import and add the function to this emplacement. set it to None.
-    #           'function_result': <tuple>,                      NOTE: once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
-    #           'callback_pre':    <function>,                   NOTE: the function to call when the result is ready. args are: (self, context, result) and the function shall return None. 
-    #           'callback_post':   <function>,                         callbacks will never execute in the main thread, it will be called in the background thread. 
-    #       },                                                         it will block blender UI and can have access to bpy.
+    #       <taskindex>: {       NOTE: The task index, int starting at 0.
+    #           'script_path': <path/to/script.py>,              NOTE: The script path where your function is located. This module shall be totally indpeendent from blender!
+    #           'positional_args': [<args_value>],               NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
+    #           'keyword_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'RESULTS|<taskindex>|<result_index>'
+    #           'function_name': "<function_name>",              NOTE: The name of the function you wish to execute in background
+    #                                                                  the function must be pickleable and found on module top level!
+    #           'function_worker': <function>,                   NOTE: We'll import and add the function to this emplacement. Just set it to None!
+    #           'function_result': <tuple>,                      NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
+    #           'callback_pre':    <function>,                   NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
+    #           'callback_post':   <function>,                         callbacks will never execute in background, it will be called in the main thread. 
+    #       },                                                         thereforr it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
 
     queues = {
         "my_series_of_tasks" : {
