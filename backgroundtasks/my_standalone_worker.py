@@ -10,6 +10,8 @@ def mytask(v, printhis=None):
     
     time.sleep(1.5)  # Simulate work
     
+    raise Exception("Testing error in worker...")
+
     if (printhis is not None):
         print(f"Printing this: {printhis}")
         return v * 2, 2222

@@ -48,6 +48,10 @@ BACKGROUND_TASKS_DIR = os.path.join(os.path.dirname(__file__), "backgroundtasks"
 
 
 class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
+    """Schedule a series of background tasks using the multiprocessing module (not tied to python GIL).
+    Use the queue_identifier to specify which queue to use. and define the class.queues map before calling the operator.
+    Note that if an error occues, the whole queue will be cancelled.
+    """
 
     bl_idname = "multiprocess.launch_background_tasks"
     bl_label = "Launch Multiprocess"
@@ -113,6 +117,9 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         }
     }
 
+    callback_fatal_error = None #NOTE: function to call when a fatal error occured and we need to cancel the whole queue.
+                                # excepted signature: (self, context)
+
     def __init__(self, *args, **kwargs):        
         print("INFO: MULTIPROCESS_OT_launch_background_tasks.__init__()")
         super().__init__(*args, **kwargs)
@@ -121,6 +128,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         self._modal_timer = None #the modal timer item, important for tracking the currently running background task.
         self._awaiting_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
         self._tmp_sys_paths = [] #a list of module paths that were added to sys.path, nead a cleanup when not needed anymore.
+        self._successfully_finished = False #flag to check if the queue was successfully finished.
         
         self.qactive = False #the queue of tasks corresponding to the queue identifier, a dict of tasks of worker functions to be executed
         self.qidx = 0 #the current index of the task that is being executed
@@ -221,14 +229,16 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             #make sure the queue identifier is set..
             if (self.queue_identifier not in self.queues):
                 print(f"ERROR: launch_background_tasks.execute(): Queue identifier {self.queue_identifier} not found in queue dict.")
-                return {'CANCELLED'}
+                self.cleanup(context)
+                return {'FINISHED'}
             self.qactive = self.queues[self.queue_identifier]
 
             # create the function queue
             valid_worker_found = self.collect_worker_fcts(context)
             if (len(self.qactive) != valid_worker_found):
                 print("ERROR: launch_background_tasks.execute(): We couldn't find all the worker functions for your queue.")
-                return {'CANCELLED'}
+                self.cleanup(context)
+                return {'FINISHED'}
 
             # initialize a processing pool
             ctx = multiprocessing.get_context('spawn')
@@ -243,7 +253,42 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
         except Exception as e:
             print(f"ERROR: launch_background_tasks.execute(): Error starting multiprocessing: {e}")
             traceback.print_exc()
-            return {'CANCELLED'}
+            self.cleanup(context)
+            return {'FINISHED'}
+
+    def exec_callback(self, context, callback_identifier=None,):
+        """call the callback function for the current task."""
+        
+        match callback_identifier:
+
+            case 'callback_post':
+                callback = self.qactive[self.qidx].get('callback_post', None)
+                if (callback is not None):
+                    print(f"INFO: launch_background_tasks.exec_callback(): Calling Task{self.qidx} 'callback_post'...")
+                    try:
+                        callback(self, context, self.qactive[self.qidx]['function_result'])
+                    except Exception as e:
+                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling Task{self.qidx} 'callback_post': {e}")
+
+            case 'callback_pre':
+                callback = self.qactive[self.qidx].get('callback_pre', None)
+                if (callback is not None):
+                    print(f"INFO: launch_background_tasks.exec_callback(): Calling Task{self.qidx} 'callback_pre'...")
+                    try:
+                        callback(self, context)
+                    except Exception as e:
+                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling Task{self.qidx} 'callback_pre': {e}")
+                        
+            case 'callback_fatal_error':
+                if (self.callback_fatal_error is not None):
+                    print(f"INFO: launch_background_tasks.exec_callback(): Calling 'callback_fatal_error'...")
+                    callback = self.callback_fatal_error
+                    try:
+                        callback(self, context)
+                    except Exception as e:
+                        print(f"ERROR: launch_background_tasks.exec_callback(): Error calling 'callback_fatal_error': {e}")
+                
+        return None
 
     def start_task(self, context) -> bool:
         """start a task in the pool.
@@ -264,7 +309,7 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             resolved_kwargs = self.resolve_params_notation(kwargs) if kwargs else {}
 
             # call the callback_pre function, if exists
-            self.call_callback(context, 'callback_pre')
+            self.exec_callback(context, 'callback_pre')
 
             # Use apply_async instead of map_async - it handles multiple args and kwargs naturally
             self._awaiting_result = self._pool.apply_async(function_worker, resolved_args, resolved_kwargs)
@@ -298,59 +343,53 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
             traceback.print_exc()
             return False
 
-    def call_callback(self, context, callback_identifier=None,):
-        """call the callback function for the current task."""
-        
-        match callback_identifier:
-
-            case 'callback_post':
-                callback = self.qactive[self.qidx].get('callback_post', None)
-                if (callback is not None):
-                    print(f"INFO: launch_background_tasks.modal(): Calling Task{self.qidx} result callback...")
-                    try:
-                        callback(self, context, self.qactive[self.qidx]['function_result'])
-                    except Exception as e:
-                        print(f"ERROR: launch_background_tasks.modal(): Error calling Task{self.qidx} result callback: {e}")
-
-            case 'callback_pre':
-                callback = self.qactive[self.qidx].get('callback_pre', None)
-                if (callback is not None):
-                    print(f"INFO: launch_background_tasks.modal(): Calling Task{self.qidx} pre callback...")
-                    try:
-                        callback(self, context)
-                    except Exception as e:
-                        print(f"ERROR: launch_background_tasks.modal(): Error calling Task{self.qidx} pre callback: {e}")
-        return None
-
     def modal(self, context, event):
 
         # Check if processing is complete
         if (event.type!='TIMER'):
             return {'PASS_THROUGH'}
 
+        print("running")
+
         # if a queue is empty, it means a task is waiting to be done!
         if (self._awaiting_result is None):
 
             # if we are at the end of the queue, we can finish the modal
             if (self.qidx >= len(self.qactive)):
-                return self.finish(context)
+                self.successful_finish(context)
+                self.cleanup(context)
+                return {'FINISHED'}
 
             # if not, we start a new task
-            succeeeded = self.start_task(context)
-            if (not succeeeded):
-                return {'CANCELLED'}
+            succeeded = self.start_task(context)
+            if (not succeeded):
+                self.cleanup(context)
+                return {'FINISHED'}
 
             return {'PASS_THROUGH'}
 
-        # do we have a task finished? get the results
+                # do we have a task finished? get the results
         if (self._awaiting_result.ready()):
 
-            succeeeded = self.store_task_result(context)
-            if (not succeeeded):
-                return {'CANCELLED'}
+            if (not self._awaiting_result.successful()):
+                print(f"ERROR: launch_background_tasks.modal(): Task{self.qidx} worker function ran into an Error..")
+                try: self._awaiting_result.get() #this line will cause an exception we use to pass the message in console..
+                except Exception as e:
+                    print(f"  Error: '{e}'")
+                    print(f"  Full Traceback:")
+                    print("-"*100)
+                    traceback.print_exc()
+                    print("-"*100)
+                self.cleanup(context)
+                return {'FINISHED'}
+
+            succeeded = self.store_task_result(context)
+            if (not succeeded):
+                self.cleanup(context)
+                return {'FINISHED'}
 
             # handle callback functions if exists..
-            self.call_callback(context, 'callback_post')
+            self.exec_callback(context, 'callback_post')
 
             # set up environement for the next task
             self.qidx += 1
@@ -360,16 +399,24 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         return {'PASS_THROUGH'}
 
-    def finish(self, context):
+    def successful_finish(self, context):
+        """finish the queue."""
+
+        self._successfully_finished = True
 
         print("INFO: launch_background_tasks.finish(): All tasks finished! Results:")
         for k,v in self.qactive.items():
             print(f"     Task{k}: {v['function_result']}")
 
-        return {'FINISHED'}                    
+        return None
         
     def cleanup(self, context):
-        
+        """clean up our operator after use."""
+
+        #callback if something went wrong
+        if (not self._successfully_finished):
+            self.exec_callback(context, 'callback_fatal_error')
+
         #remove timer
         if (self._modal_timer):
             context.window_manager.event_timer_remove(self._modal_timer)
@@ -396,10 +443,6 @@ class MULTIPROCESS_OT_launch_background_tasks(bpy.types.Operator):
 
         print("INFO: launch_background_tasks.cleanup(): clean up done")
         return None
-
-    def __del__(self):
-        print("INFO: launch_background_tasks.__del__()")
-        self.cleanup(bpy.context)
         
 
 
