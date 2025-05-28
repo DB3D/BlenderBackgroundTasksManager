@@ -444,8 +444,8 @@ BACKGROUND_TASKS_DIR = os.path.join(os.path.dirname(__file__), "backgroundtasks"
 class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy.types.Operator):
     
     bl_idname = "multiprocess.mybackgroundqueue"
-    bl_label = "Launch Multiprocess"
-    bl_description = "Start parallel processing"
+    bl_label = "Launch Background Tasks"
+    bl_description = "Launch Background Tasks"
 
     callback_before_queue = lambda self, context: print("Callback: Before queue")
     callback_after_queue = lambda self, context: print("Callback: After queue") 
