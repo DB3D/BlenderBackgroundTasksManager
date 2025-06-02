@@ -17,21 +17,29 @@ import time
 import traceback
 import multiprocessing
 
-
+#simple debug print implementation..
 IS_DEBUG = True
-
 def debugprint(*args, **kwargs):
     if (IS_DEBUG):
         print(*args, **kwargs)
     return None
 
-
-class BackgroundQueueProcessingModalMixin:
-    """Schedule a series of background tasks using the multiprocessing module (not tied to python GIL).
+# oooooooooo.  oooo                      oooo         o8o                         
+# `888'   `Y8b `888                      `888         `"'                         
+#  888     888  888   .ooooo.   .ooooo.   888  oooo  oooo  ooo. .oo.    .oooooooo 
+#  888oooo888'  888  d88' `88b d88' `"Y8  888 .8P'   `888  `888P"Y88b  888' `88b  
+#  888    `88b  888  888   888 888        888888.     888   888   888  888   888  
+#  888    .88P  888  888   888 888   .o8  888 `88b.   888   888   888  `88bod8P'  
+# o888bood8P'  o888o `Y8bod8P' `Y8bod8P' o888o o888o o888o o888o o888o `8oooooo.  
+#                                                                      d"     YD  
+#                                                                      "Y88888P'  
+class BlockingQueueProcessingModalMixin:
+    """Schedule a series of blocking tasks, with callback to refresh a potential blender interface 
+    All tasks will be executed one after the other in a queue manner.
     Use the queue_identifier to specify which queue to use. and define the class.queues map before calling the operator.
     Note that if an error occurs, the whole queue will be cancelled.
-    
-    This operator is meant to be subclassed, not instantiated directly.
+
+    This class is meant to be a mixin subclassed, not to be used directly.
     """
 
     bl_idname = "*children_defined*"
@@ -48,7 +56,58 @@ class BackgroundQueueProcessingModalMixin:
     #   change cls.queues dict before calling the operation to add your own tasks!
     #   make sure to set self.queue_identifier and that this value is present in the queue dict.
     ################### Expected format: ###################
-    #  <queueidentifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
+    #  <queue_identifier>: {    NOTE: perhaps you wish this class to be able to handle a variety of tasks executions. that is why we need to identigy your queue, will equal to the passed self.queue_identifier
+    #     <taskindex>: {       NOTE: The task index, int starting at 0.
+    #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function.
+    #         'task_kw_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'USE_TASK_RESULT|<taskindex>|<result_index>'
+    #         'task_function': <function>,                     NOTE: define the function to execute (the function can access bpy)
+    #         'task_result': <tuple>,                          NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
+    #         'task_callback_pre':    <function>,              NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
+    #         'task_callback_post':   <function>,                    callbacks will never execute in background, it will be called in the main thread. 
+    #     },                                                         therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
+    #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][task_idx][..]) if needed.
+    #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
+    #     'queue_callback_fatal_error': <function>, NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
+    #  },                                                     therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+
+    queues = {}
+    
+    #TODO will need to check if this opperator is in the current windows modal before ruinning modal, only one at the time
+
+
+#   .oooooo.                                                  
+#  d8P'  `Y8b                                                 
+# 888      888    oooo  oooo   .ooooo.  oooo  oooo   .ooooo.  
+# 888      888    `888  `888  d88' `88b `888  `888  d88' `88b 
+# 888      888     888   888  888ooo888  888   888  888ooo888 
+# `88b    d88b     888   888  888    .o  888   888  888    .o 
+#  `Y8bood8P'Ybd'  `V88V"V8P' `Y8bod8P'  `V88V"V8P' `Y8bod8P'                                                           
+
+class BackgroundQueueProcessingModalMixin:
+    """Schedule a series of background tasks using the multiprocessing module (not tied to python GIL).
+    All tasks will be executed one after the other in a queue manner.
+    Use the queue_identifier to specify which queue to use. and define the class.queues map before calling the operator.
+    Note that if an error occurs, the whole queue will be cancelled.
+
+    This class is meant to be a mixin subclassed, not to be used directly.
+    """
+
+    bl_idname = "*children_defined*"
+    bl_label = "*children_defined*"
+    bl_description = "*children_defined*"
+
+    queue_identifier : bpy.props.StringProperty(
+        default="",
+        description="Identifier for the process, in order to retrieve queue instruction for this process in cls.queues",
+        )
+
+    # NOTE: about the queues parameter:
+    ################### Usage: #############################
+    #   change cls.queues dict before calling the operation to add your own tasks!
+    #   make sure to set self.queue_identifier and that this value is present in the queue dict.
+    ################### Expected format: ###################
+    #  <queue_identifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
     #     <taskindex>: {       NOTE: The task index, int starting at 0.
     #         'task_script_path': <path/to/script.py>,         NOTE: The script path where your function is located. This module shall be totally indpeendent from blender!
     #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
@@ -59,12 +118,12 @@ class BackgroundQueueProcessingModalMixin:
     #         'task_result': <tuple>,                          NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
     #         'task_callback_pre':    <function>,              NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
     #         'task_callback_post':   <function>,                    callbacks will never execute in background, it will be called in the main thread. 
-    #     },                                                         thereforr it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #     },                                                         therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][task_idx][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
     #     'queue_callback_fatal_error': <function>, NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
-    #  },                                                     thereforr it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #  },                                                     therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
 
     queues = {}
 
@@ -99,7 +158,7 @@ class BackgroundQueueProcessingModalMixin:
     @classmethod
     def start_background_queue(cls, queue_identifier:str):
         """Start a queue of background tasks. Will run bpy.ops. Meant for public use.
-        or run """
+        or run the according bpy.ops with the according queue identifier"""
 
         if (queue_identifier not in cls.queues):
             raise ValueError(f"ERROR: start_background_queue(): Queue identifier {queue_identifier} not found in queue dict. Make sure to use define_background_queue() classmethod function to define a queue first")
@@ -119,7 +178,7 @@ class BackgroundQueueProcessingModalMixin:
         self._pool_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
         self._tmp_sys_paths = [] #a list of module paths that were added to sys.path, nead a cleanup when not needed anymore.
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
-        self._successfully_finished = False #flag to check if the queue was successfully finished.
+        self._all_successfully_finished = False #flag to check if the queue was successfully finished.
         
         self.qactive = None #the queue of tasks corresponding to the queue identifier, a dict of tasks of worker functions to be executed
         self.qidx = 0 #the current index of the task that is being executed
@@ -240,7 +299,7 @@ class BackgroundQueueProcessingModalMixin:
 
         #call the queue_callback_pre function, if exists
         self.exec_callback(context, 'queue_callback_pre')
-        
+
         debugprint(f"INFO: {self._debugname}.execute(): Starting multiprocessing..")
         try:            
 
@@ -268,7 +327,7 @@ class BackgroundQueueProcessingModalMixin:
 
     def exec_callback(self, context, callback_identifier=None,):
         """call the callback function for the current task."""
-        
+
         if (callback_identifier not in {'task_callback_post','task_callback_pre','queue_callback_fatal_error','queue_callback_pre','queue_callback_post',}):
             print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}")
             return None
@@ -417,7 +476,7 @@ class BackgroundQueueProcessingModalMixin:
     def successful_finish(self, context):
         """finish the queue."""
 
-        self._successfully_finished = True
+        self._all_successfully_finished = True
 
         #debug print the result of each queue tasks?
         global IS_DEBUG
@@ -433,7 +492,7 @@ class BackgroundQueueProcessingModalMixin:
         """clean up our operator after use."""
 
         #callback if something went wrong
-        if (not self._successfully_finished):
+        if (not self._all_successfully_finished):
               self.exec_callback(context, 'queue_callback_fatal_error')
         else: self.exec_callback(context, 'queue_callback_post')
 
@@ -465,10 +524,90 @@ class BackgroundQueueProcessingModalMixin:
         debugprint(f"INFO: {self._debugname}.cleanup(): clean up done")
         return None
 
+# ooooooooo.                                oooo  oooo            oooo  
+# `888   `Y88.                              `888  `888            `888  
+#  888   .d88'  .oooo.   oooo d8b  .oooo.    888   888   .ooooo.   888  
+#  888ooo88P'  `P  )88b  `888""8P `P  )88b   888   888  d88' `88b  888  
+#  888          .oP"888   888      .oP"888   888   888  888ooo888  888  
+#  888         d8(  888   888     d8(  888   888   888  888    .o  888  
+# o888o        `Y888""8o d888b    `Y888""8o o888o o888o `Y8bod8P' o888o 
 
-################################################################################
+class ParallelQueueProcessingModalMixin:
+    """Schedule a series of background tasks stored run in parallel.
+    All tasks will be executed in the background in  parallel (if their results are not co dependent).
+    Use the taskpile_identifier to specify which queue to use. and define the class.queues map before calling the operator.
+    Note that if an error occurs, the whole queue will be cancelled.
+
+    This class is meant to be a mixin subclassed, not to be used directly.
+    """
+
+    bl_idname = "*children_defined*"
+    bl_label = "*children_defined*"
+    bl_description = "*children_defined*"
+
+    multithread_allocation : bpy.props.IntProperty(
+        description="#TODO the percentage of max tasks (threads???)  to be launched simultaneously (in percentage because it varies from machine)",
+        default=70,
+        min=10,
+        max=100,
+        )
+    taskpile_identifier : bpy.props.StringProperty(
+        default="",
+        description="Identifier for the process, in order to retrieve queue instruction for this process in cls.queues",
+        )
+
+    # NOTE: about the queues parameter:
+    ################### Usage: #############################
+    #   change cls.queues dict before calling the operation to add your own tasks!
+    #   make sure to set self.taskpile_identifier and that this value is present in the queue dict.
+    ################### Expected format: ###################
+    #  <taskpile_identifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.taskpile_identifier
+    #     <taskindex>: {       NOTE: The task index, int starting at 0.
+    #         'task_script_path': <path/to/script.py>,         NOTE: The script path where your function is located. This module shall be totally indpeendent from blender!
+    #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
+    #         'task_kw_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'USE_TASK_RESULT|<taskindex>|<result_index>' by doing so, paralellization won't be possible for this task!!!
+    #         'task_fn_name': "<task_fn_name>",                NOTE: The name of the function you wish to execute in background
+    #                                                                the function must be pickleable and found on module top level!
+    #         'task_fn_worker': <function>,                    NOTE: We'll import and add the function to this emplacement. Just set it to None!
+    #         'task_result': <tuple>,                          NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
+    #         'task_callback_pre':    <function>,              NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
+    #         'task_callback_post':   <function>,                    callbacks will never execute in background, it will be called in the main thread. 
+    #     },                                                         therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
+    #     'taskspile_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.taskpile_identifier][task_idx][..]) if needed.
+    #     'taskspile_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
+    #     'taskspile_callback_fatal_error': <function>, NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
+    #  },                                                     therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+
+    taskpiles = {}
+
+    def initialize_variables(self):
+        """Initialize the operator state variables"""
+
+        self._debugname = self.__class__.bl_idname
+        self._modal_timer = None #the modal timer item, important for tracking the currently running background task.
+        self._pool = None #the multiprocessing pool, used to run the tasks in parallel.
+        self._pool_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
+        self._tmp_sys_paths = [] #a list of module paths that were added to sys.path, nead a cleanup when not needed anymore.
+        self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
+        self._all_successfully_finished = False #flag to check if the queue was successfully finished.
+
+        self.pileactive = None #the queue of tasks corresponding to the taskpile_identifier, a dict of tasks of worker functions to be executed
+        self.subqueues = [] #some tasks might be co-dependent if using the 'USE_TASK_RESULT' notation. therefore we may need to manage multiple queue in parallel
+        
+        return None
+
+
+# ooooo                              oooo          
+# `888'                              `888          
+#  888  ooo. .oo.  .oo.   oo.ooooo.   888   .ooooo.
+#  888  `888P"Y88bP"Y88b   888' `88b  888  d88' `88b
+#  888   888   888   888   888   888  888  888ooo888
+#  888   888   888   888   888   888  888  888    .
+# o888o o888o o888o o888o  888bod8P' o888o `Y8bod8P
+#                          888                                                                                                                     
+#                         o888o                                                                                                                                                                                                                                                                   
 # Implementation Example
-################################################################################
 
 def tag_redraw_all():
     for window in bpy.context.window_manager.windows:
