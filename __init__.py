@@ -8,14 +8,15 @@ bl_info = {
     "category": "Development",
 }
 
+#TODO
+#-automatically import modules on plugin init and put it on globals
+#-add op.is_cancelling = True option and op.cancel() which will add a cancel flag to the queue dict
+
 import bpy
 
 import os
-import sys
-import uuid
 import time
 import traceback
-import multiprocessing
 
 #simple debug print implementation..
 IS_DEBUG = True
@@ -342,6 +343,59 @@ class BlockingQueueProcessingModalMixin:
         debugprint(f"INFO: {self._debugname}.cleanup(): clean up done")
         return None
 
+
+# ooo        ooooo             oooo      .    o8o  ooooooooo.                                                             o8o                         
+# `88.       .888'             `888    .o8    `"'  `888   `Y88.                                                           `"'                         
+#  888b     d'888  oooo  oooo   888  .o888oo oooo   888   .d88' oooo d8b  .ooooo.   .ooooo.   .ooooo.   .oooo.o  .oooo.o oooo  ooo. .oo.    .oooooooo 
+#  8 Y88. .P  888  `888  `888   888    888   `888   888ooo88P'  `888""8P d88' `88b d88' `"Y8 d88' `88b d88(  "8 d88(  "8 `888  `888P"Y88b  888' `88b  
+#  8  `888'   888   888   888   888    888    888   888          888     888   888 888       888ooo888 `"Y88b.  `"Y88b.   888   888   888  888   888  
+#  8    Y     888   888   888   888    888 .  888   888          888     888   888 888   .o8 888    .o o.  )88b o.  )88b  888   888   888  `88bod8P'  
+# o8o        o888o  `V88V"V8P' o888o   "888" o888o o888o        d888b    `Y8bod8P' `Y8bod8P' `Y8bod8P' 8""888P' 8""888P' o888o o888o o888o `8oooooo.  
+#                                                                                                                                          d"     YD  
+#                                                                                                                                          "Y88888P'  
+
+import sys
+import multiprocessing
+
+#TODO improve this..
+BACKGROUND_TASKS_MODULE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backgroundtasks")
+assert os.path.exists(BACKGROUND_TASKS_MODULE), f"Background tasks module not found: {BACKGROUND_TASKS_MODULE}"
+
+MULTIPROCESSING_ALLOCATED_CORES = -1
+MULTIPROCESSING_POOL = None
+
+def init_multiprocessing(process_alloc=90):
+    """start a new multiprocessing pool, used in this plugin."""    
+    global MULTIPROCESSING_ALLOCATED_CORES, MULTIPROCESSING_POOL
+
+    # insert a new path to sys.path, so the background tasks module can be found by the 
+    # multiprocessing module.. as it will copy the sys.path list to a new process outside of GIL..
+    sys.path.insert(0, BACKGROUND_TASKS_MODULE)
+    
+    #calculate the number of cores to use, and start a new pool.
+    MULTIPROCESSING_ALLOCATED_CORES = max(1, int(multiprocessing.cpu_count() * process_alloc/100))
+    MULTIPROCESSING_POOL = multiprocessing.get_context('spawn').Pool(MULTIPROCESSING_ALLOCATED_CORES)
+
+    return None
+
+def deinit_multiprocessing():
+    """destroy the multiprocessing pool, used in this plugin."""
+    global MULTIPROCESSING_ALLOCATED_CORES, MULTIPROCESSING_POOL
+
+    # pool's closed (due to..)
+    MULTIPROCESSING_POOL.close()
+    MULTIPROCESSING_POOL.join()
+    MULTIPROCESSING_POOL = None
+
+    #reset the working cores
+    MULTIPROCESSING_ALLOCATED_CORES = -1
+
+    #remove temp module from sys.path
+    if (BACKGROUND_TASKS_MODULE in sys.path):
+        sys.path.remove(BACKGROUND_TASKS_MODULE)
+
+    return None
+
 #   .oooooo.                                                  
 #  d8P'  `Y8b                                                 
 # 888      888    oooo  oooo   .ooooo.  oooo  oooo   .ooooo.  
@@ -440,9 +494,7 @@ class BackgroundQueueProcessingModalMixin:
 
         self._debugname = self.__class__.bl_idname
         self._modal_timer = None #the modal timer item, important for tracking the currently running background task.
-        self._pool = None #the multiprocessing pool, used to run the tasks in parallel.
         self._pool_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
-        self._tmp_sys_paths = [] #a list of module paths that were added to sys.path, nead a cleanup when not needed anymore.
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
         self._all_successfully_finished = False #flag to check if the queue was successfully finished.
         
@@ -459,17 +511,10 @@ class BackgroundQueueProcessingModalMixin:
             print(f"WARNING: {self._debugname}.import_worker_fct(): Module path does not exist: ", modulefile)
             return None
         
-        moduledir = os.path.dirname(modulefile)
-        modulename = os.path.basename(modulefile).replace(".py", "")
-
-        # add temp module, so our Pool.map_async() can find it without
-        # being fcked by 'bl_ext' module dependencies.
-        if (moduledir not in sys.path):
-            sys.path.insert(0, moduledir)
-            # writing in there is bad practice, but it's ok we gonna clean later..
-            self._tmp_sys_paths.append(moduledir)
-
+        # TODO: IMPROVEMENTS:
+        # procedurally import all the worker modules on plugin init..
         # Import the standalone worker module
+        modulename = os.path.basename(modulefile).replace(".py", "")
         try:
             exec(f"import {modulename}", globals())
             module_worker = globals()[modulename]
@@ -575,10 +620,6 @@ class BackgroundQueueProcessingModalMixin:
                 self.cleanup(context)
                 return {'FINISHED'}
 
-            # initialize a processing pool
-            ctx = multiprocessing.get_context('spawn')
-            self._pool = ctx.Pool(2)
-
             # Start modal operation
             self._modal_timer = context.window_manager.event_timer_add(0.15, window=context.window)
             context.window_manager.modal_handler_add(self)
@@ -653,7 +694,7 @@ class BackgroundQueueProcessingModalMixin:
             resolved_kwargs = self.resolve_params_notation(kwargs) if kwargs else {}
 
             # Use apply_async instead of map_async - it handles multiple args and kwargs naturally
-            self._pool_result = self._pool.apply_async(taskfunc, resolved_args, resolved_kwargs)
+            self._pool_result = MULTIPROCESSING_POOL.apply_async(taskfunc, resolved_args, resolved_kwargs)
         
             debugprint(f"INFO: {self._debugname}.start_background_task(): Task{self.qidx} started!")
             return True
@@ -768,12 +809,6 @@ class BackgroundQueueProcessingModalMixin:
             context.window_manager.event_timer_remove(self._modal_timer)
             self._modal_timer = None
 
-        #close processing pool
-        if (self._pool):
-            self._pool.close()
-            self._pool.join()
-            self._pool = None
-
         #remove result
         if (self._pool_result):
             self._pool_result = None
@@ -781,12 +816,6 @@ class BackgroundQueueProcessingModalMixin:
         # reset counters & idx's
         self.qidx = 0
         self._tasks_count = 0
-
-        #remove temp module from sys.path
-        for module_path in self._tmp_sys_paths:
-            if (module_path in sys.path):
-                sys.path.remove(module_path)
-        self._tmp_sys_paths = []
 
         debugprint(f"INFO: {self._debugname}.cleanup(): clean up done")
         return None
@@ -798,6 +827,7 @@ class BackgroundQueueProcessingModalMixin:
 #  888          .oP"888   888      .oP"888   888   888  888ooo888  888  
 #  888         d8(  888   888     d8(  888   888   888  888    .o  888  
 # o888o        `Y888""8o d888b    `Y888""8o o888o o888o `Y8bod8P' o888o 
+
 
 class ParallelQueueProcessingModalMixin:
     """Schedule a series of background tasks stored run in parallel.
@@ -812,12 +842,6 @@ class ParallelQueueProcessingModalMixin:
     bl_label = "*children_defined*"
     bl_description = "*children_defined*"
 
-    multithread_allocation : bpy.props.IntProperty(
-        description="Percentage of CPU cores to use for parallel tasks (10-100%)",
-        default=70,
-        min=10,
-        max=100,
-        )
     taskpile_identifier : bpy.props.StringProperty(
         default="",
         description="Identifier for the process, in order to retrieve queue instruction for this process in cls.queues",
@@ -896,26 +920,16 @@ class ParallelQueueProcessingModalMixin:
 
         self._debugname = self.__class__.bl_idname
         self._modal_timer = None #the modal timer item, important for tracking the currently running background task.
-        self._pool = None #the multiprocessing pool, used to run the tasks in parallel.
         self._running_tasks = {} #dict mapping task_idx to their AsyncResult objects
         self._completed_tasks = set() #set of completed task indices
         self._available_tasks = [] #list of task indices ready to start (dependencies met)
         self._dependency_graph = {} #mapping of task dependencies: {task_idx: [depends_on_task_idx, ...]}
-        self._tmp_sys_paths = [] #a list of module paths that were added to sys.path, nead a cleanup when not needed anymore.
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
-        self._max_parallel_tasks = 1 #maximum number of tasks that can run in parallel
         self._all_successfully_finished = False #flag to check if the queue was successfully finished.
 
         self.pileactive = None #the queue of tasks corresponding to the taskpile_identifier, a dict of tasks of worker functions to be executed
         
         return None
-
-    def calculate_max_parallel_tasks(self):
-        """Calculate the maximum number of parallel tasks based on multithread_allocation"""
-        cpu_count = multiprocessing.cpu_count()
-        max_tasks = max(1, int(cpu_count * self.multithread_allocation / 100))
-        debugprint(f"INFO: {self._debugname}.calculate_max_parallel_tasks(): Using {max_tasks} parallel tasks (CPU cores: {cpu_count}, allocation: {self.multithread_allocation}%)")
-        return max_tasks
 
     def import_worker_fct(self, modulefile, function_name):
         """temporarily add module to sys.path, so it can be found by multiprocessing, 
@@ -925,17 +939,10 @@ class ParallelQueueProcessingModalMixin:
             print(f"WARNING: {self._debugname}.import_worker_fct(): Module path does not exist: ", modulefile)
             return None
         
-        moduledir = os.path.dirname(modulefile)
-        modulename = os.path.basename(modulefile).replace(".py", "")
-
-        # add temp module, so our Pool.map_async() can find it without
-        # being fcked by 'bl_ext' module dependencies.
-        if (moduledir not in sys.path):
-            sys.path.insert(0, moduledir)
-            # writing in there is bad practice, but it's ok we gonna clean later..
-            self._tmp_sys_paths.append(moduledir)
-
+        # TODO: IMPROVEMENTS:
+        # procedurally import all the worker modules on plugin init..
         # Import the standalone worker module
+        modulename = os.path.basename(modulefile).replace(".py", "")
         try:
             exec(f"import {modulename}", globals())
             module_worker = globals()[modulename]
@@ -1080,13 +1087,8 @@ class ParallelQueueProcessingModalMixin:
                 self.cleanup(context)
                 return {'FINISHED'}
 
-            # calculate max parallel tasks and build dependency graph
-            self._max_parallel_tasks = self.calculate_max_parallel_tasks()
+            # analyze function dependencies
             self.build_dependency_graph()
-
-            # initialize a processing pool
-            ctx = multiprocessing.get_context('spawn')
-            self._pool = ctx.Pool(self._max_parallel_tasks)
 
             # Start modal operation
             self._modal_timer = context.window_manager.event_timer_add(0.15, window=context.window)
@@ -1171,7 +1173,7 @@ class ParallelQueueProcessingModalMixin:
             resolved_kwargs = self.resolve_params_notation(kwargs) if kwargs else {}
 
             # Use apply_async instead of map_async - it handles multiple args and kwargs naturally
-            async_result = self._pool.apply_async(taskfunc, resolved_args, resolved_kwargs)
+            async_result = MULTIPROCESSING_POOL.apply_async(taskfunc, resolved_args, resolved_kwargs)
             self._running_tasks[task_idx] = async_result
         
             debugprint(f"INFO: {self._debugname}.start_parallel_task(): Task{task_idx} started! ({len(self._running_tasks)} tasks running)")
@@ -1243,6 +1245,7 @@ class ParallelQueueProcessingModalMixin:
         """Update the list of available tasks based on completed dependencies"""
         
         for task_idx, dependencies in self._dependency_graph.items():
+
             # Skip tasks that are already completed, running, or available
             if (task_idx in self._completed_tasks or 
                 task_idx in self._running_tasks or 
@@ -1257,16 +1260,14 @@ class ParallelQueueProcessingModalMixin:
     def start_new_tasks(self, context) -> bool:
         """Start new tasks if we have capacity and available tasks.
         Return True if no errors occurred, False otherwise."""
-        
+
         # Start new tasks while we have capacity and available tasks
-        while (len(self._running_tasks) < self._max_parallel_tasks and 
-               len(self._available_tasks) > 0):
-            
+        while ((len(self._running_tasks) < MULTIPROCESSING_ALLOCATED_CORES) and (len(self._available_tasks) > 0)):
             task_idx = self._available_tasks.pop(0)
             succeeded = self.start_parallel_task(context, task_idx)
             if (not succeeded):
                 return False
-        
+
         return True
 
     def modal(self, context, event):
@@ -1323,12 +1324,6 @@ class ParallelQueueProcessingModalMixin:
             context.window_manager.event_timer_remove(self._modal_timer)
             self._modal_timer = None
 
-        #close processing pool
-        if (self._pool):
-            self._pool.close()
-            self._pool.join()
-            self._pool = None
-
         #clear running tasks
         self._running_tasks.clear()
         self._completed_tasks.clear()
@@ -1337,13 +1332,6 @@ class ParallelQueueProcessingModalMixin:
 
         # reset counters
         self._tasks_count = 0
-        self._max_parallel_tasks = 1
-
-        #remove temp module from sys.path
-        for module_path in self._tmp_sys_paths:
-            if (module_path in sys.path):
-                sys.path.remove(module_path)
-        self._tmp_sys_paths = []
 
         debugprint(f"INFO: {self._debugname}.cleanup(): clean up done")
         return None
@@ -1483,7 +1471,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
         "my_complex_parallel_tasks" : {
             # Wave 0: 5 independent solo tasks (run in parallel)
             0: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': [1, "DataA"],
                 'task_kw_args': {"delay": 2.0},
                 'task_fn_name': "process_data",
@@ -1493,7 +1481,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(0, "completed"),
             },
             1: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': [2, "DataB"],
                 'task_kw_args': {"delay": 1.5},
                 'task_fn_name': "process_data",
@@ -1503,7 +1491,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(1, "completed"),
             },
             2: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': [3, "DataC"],
                 'task_kw_args': {"delay": 2.5},
                 'task_fn_name': "process_data",
@@ -1513,7 +1501,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(2, "completed"),
             },
             3: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': [4, "DataD"],
                 'task_kw_args': {"delay": 1.0},
                 'task_fn_name': "process_data",
@@ -1523,7 +1511,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(3, "completed"),
             },
             4: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': [5, "DataE"],
                 'task_kw_args': {"delay": 1.8},
                 'task_fn_name': "process_data",
@@ -1535,7 +1523,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
             
             # Wave 1: 2 tasks that depend on solo tasks (queue level 1)
             5: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': ['USE_TASK_RESULT|0|0', 'USE_TASK_RESULT|1|0'],  # Depends on tasks 0 and 1
                 'task_kw_args': {"operation": "combine"},
                 'task_fn_name': "combine_results",
@@ -1545,7 +1533,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(5, "completed"),
             },
             6: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': ['USE_TASK_RESULT|2|0', 'USE_TASK_RESULT|3|0', 'USE_TASK_RESULT|4|0'],  # Depends on tasks 2, 3, 4
                 'task_kw_args': {"operation": "merge"},
                 'task_fn_name': "combine_results",
@@ -1557,7 +1545,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
             
             # Wave 2: 2 final tasks that depend on the queue results (queue level 2)
             7: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "my_parallel_worker.py"),
+                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
                 'task_pos_args': ['USE_TASK_RESULT|5|0', 'USE_TASK_RESULT|6|0'],  # Depends on task 5,6 results
                 'task_kw_args': {},
                 'task_fn_name': "analyze_data",
@@ -1695,11 +1683,9 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
         button.scale_y = 1.3
         op = button.operator("multiprocess.myparalleltasks", text="Launch Parallel Tasks!", icon='MODIFIER')
         op.taskpile_identifier = "my_complex_parallel_tasks"
-        op.multithread_allocation = getattr(context.scene, "multithread_allocation", 70)
-        
-        box.prop(context.scene, "multithread_allocation", text="CPU Allocation %", slider=True)
+
         box.separator(type='LINE')
-        
+
         # Task wave visualization
         if (PARALLEL_TASK_STATUS):
             wave_box = box.box()
@@ -1747,23 +1733,16 @@ classes = [
     ]
 
 def register():
+
+    #create a new multiprocessing pool with 90% of the available cores
+    init_multiprocessing(process_alloc=90)
+
     for cls in classes:
         bpy.utils.register_class(cls)
-    
-    # Add scene properties for parallel tasks
-    bpy.types.Scene.multithread_allocation = bpy.props.IntProperty(
-        name="CPU Allocation",
-        description="Percentage of CPU cores to use for parallel tasks",
-        default=70,
-        min=10,
-        max=100,
-        subtype='PERCENTAGE'
-    )
 
 def unregister():
+
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     
-    # Remove scene properties
-    if hasattr(bpy.types.Scene, "multithread_allocation"):
-        del bpy.types.Scene.multithread_allocation
+    deinit_multiprocessing()
