@@ -989,19 +989,15 @@ class ParallelQueueProcessingModalMixin:
             args = task_data.get('task_pos_args', [])
             for arg in args:
                 if (isinstance(arg, str) and arg.startswith('USE_TASK_RESULT|')):
-                    parts = arg.split('|')
-                    if (len(parts) >= 2):
-                        dep_task_idx = int(parts[1])
-                        dependencies.add(dep_task_idx)
+                    dep_task_idx = int(arg.split('|')[1])
+                    dependencies.add(dep_task_idx)
             
             # Check task_kw_args for USE_TASK_RESULT references
             kwargs = task_data.get('task_kw_args', {})
             for value in kwargs.values():
                 if (isinstance(value, str) and value.startswith('USE_TASK_RESULT|')):
-                    parts = value.split('|')
-                    if (len(parts) >= 2):
-                        dep_task_idx = int(parts[1])
-                        dependencies.add(dep_task_idx)
+                    dep_task_idx = int(value.split('|')[1])
+                    dependencies.add(dep_task_idx)
             
             self._dependency_graph[task_idx] = list(dependencies)
         
@@ -1274,7 +1270,7 @@ class ParallelQueueProcessingModalMixin:
         return True
 
     def modal(self, context, event):
-
+        
         # Check if processing is complete
         if (event.type!='TIMER'):
             return {'PASS_THROUGH'}
@@ -1694,25 +1690,21 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
         ###########################################
         #Example 3: Parallel tasks with wave visualization
         box = layout.box()
+        
         button = box.column()
         button.scale_y = 1.3
-        
-        # Multithread allocation slider
-        row = button.row()
-        row.prop(context.scene, "multithread_allocation", text="CPU Allocation %", slider=True)
-        
-        # Launch button
         op = button.operator("multiprocess.myparalleltasks", text="Launch Parallel Tasks!", icon='MODIFIER')
         op.taskpile_identifier = "my_complex_parallel_tasks"
         op.multithread_allocation = getattr(context.scene, "multithread_allocation", 70)
         
+        box.prop(context.scene, "multithread_allocation", text="CPU Allocation %", slider=True)
         box.separator(type='LINE')
         
         # Task wave visualization
         if (PARALLEL_TASK_STATUS):
             wave_box = box.box()
             wave_box.label(text="Task Execution Waves:", icon='NETWORK_DRIVE')
-            
+
             # Create 3 columns for the 3 waves
             split = wave_box.split(factor=0.33)
             
@@ -1740,8 +1732,9 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
                 row = col2.row()
                 row.label(text=f"Task{task_idx}: {status.title()}", icon=icon)
         
+            box.separator(type='LINE')
+
         # Status message
-        box.separator(type='LINE')
         box.label(text=MYMESSAGES['ex3'])
 
         return None
