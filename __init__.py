@@ -58,23 +58,289 @@ class BlockingQueueProcessingModalMixin:
     ################### Expected format: ###################
     #  <queue_identifier>: {    NOTE: perhaps you wish this class to be able to handle a variety of tasks executions. that is why we need to identigy your queue, will equal to the passed self.queue_identifier
     #     <taskindex>: {       NOTE: The task index, int starting at 0.
-    #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function.
+    #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function. self will be pased automatically as first argument!
     #         'task_kw_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'USE_TASK_RESULT|<taskindex>|<result_index>'
-    #         'task_function': <function>,                     NOTE: define the function to execute (the function can access bpy)
+    #         'task_fn_blocking': <function>,                  NOTE: Define the blocking function to execute (can have access to bpy). Expect self as first argument! always!
     #         'task_result': <tuple>,                          NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
     #         'task_callback_pre':    <function>,              NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
-    #         'task_callback_post':   <function>,                    callbacks will never execute in background, it will be called in the main thread. 
-    #     },                                                         therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #         'task_callback_post':   <function>,
+    #     },                    
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][task_idx][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
     #     'queue_callback_fatal_error': <function>, NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
-    #  },                                                     therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #  },
 
     queues = {}
-    
-    #TODO will need to check if this opperator is in the current windows modal before ruinning modal, only one at the time
 
+    @classmethod
+    def define_blocking_queue(cls, queue_identifier:str, queue_data:dict):
+        """Add a queue to the class. Meant for public use.
+        or define class.queues[queue_identifier] - .. yourself"""
+
+        tasks_count = 0
+        for k,v in queue_data.items():
+            if (type(k) is int):
+
+                #ensure these values exists
+                assert 'task_pos_args' in v, f"ERROR: define_blocking_queue(): 'task_pos_args' is required in queue_data."
+                assert 'task_kw_args' in v, f"ERROR: define_blocking_queue(): 'task_kw_args' is required in queue_data."
+                assert 'task_fn_blocking' in v, f"ERROR: define_blocking_queue(): 'task_fn_blocking' is required in queue_data."
+
+                #ensure these two values are by default always set to None
+                v['task_result'] = None
+
+                tasks_count += 1
+                continue
+
+        if (tasks_count == 0):
+            raise ValueError(f"ERROR: {cls.__name__}.define_blocking_queue(): No tasks found in queue_data.")
+
+        cls.queues[queue_identifier] = queue_data
+        return None
+
+    @classmethod
+    def start_blocking_queue(cls, queue_identifier:str):
+        """Start a queue of blocking tasks. Will run bpy.ops. Meant for public use.
+        or run the according bpy.ops with the according queue identifier"""
+
+        if (queue_identifier not in cls.queues):
+            raise ValueError(f"ERROR: {cls.__name__}.start_blocking_queue(): Queue identifier {queue_identifier} not found in queue dict. Make sure to use define_blocking_queue() classmethod function to define a queue first")
+
+        bpy_operator = getattr(bpy.ops, cls.bl_idname)
+        assert bpy_operator, f"ERROR: {cls.__name__}.start_blocking_queue(): Operator '{cls.bl_idname}' not found in bpy.ops."
+        bpy_operator(queue_identifier=queue_identifier)
+
+        return None
+
+    def initialize_variables(self):
+        """Initialize the operator state variables"""
+
+        self._debugname = self.__class__.bl_idname
+        self._modal_timer = None #the modal timer item
+        self._modal_timercount = 0 #counter to slow down modal execution to give Blender UI time to update
+        self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
+        self._all_successfully_finished = False #flag to check if the queue was successfully finished.
+
+        self.qactive = None #the queue of tasks corresponding to the queue identifier, a dict of tasks of worker functions to be executed
+        self.qidx = 0 #the current index of the task that is being executed
+
+        return None
+
+    def resolve_params_notation(self, paramargs):
+        """Resolve result references in args/kwargs, when using the 'USE_TASK_RESULT|<taskindex>|<result_index>' notation for a value."""
+        
+        def resolve_notation(notation):
+            """Resolve a single result reference."""
+            
+            parts = notation.split('|')
+            if (len(parts) != 3):
+                raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Invalid reference notation: {notation}")
+            
+            task_idx = int(parts[1])
+            result_idx = int(parts[2])
+            if (task_idx not in self.qactive):
+                raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Task index {task_idx} not found in queue: {self.qactive}")
+            result = self.qactive[task_idx]['task_result']
+            if (result is None):
+                raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Task{task_idx} results are None! Perhaps it's not ready yet, or perhaps this task return None.")
+            try:
+                value = self.qactive[task_idx]['task_result'][result_idx]
+            except Exception as e:
+                raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Invalid result index: {result_idx} for task {task_idx}: {e}")
+            return value
+        
+        match paramargs:
+            case list():
+                resolved = []
+                for value in paramargs:
+                    if (isinstance(value, str) and value.startswith('USE_TASK_RESULT|')):
+                            resolved.append(resolve_notation(value))
+                    else: resolved.append(value)
+                return resolved
+            
+            case dict():
+                resolved = {}
+                for key, value in paramargs.items():
+                    if (isinstance(value, str) and value.startswith('USE_TASK_RESULT|')):
+                            resolved[key] = resolve_notation(value)
+                    else: resolved[key] = value
+                return resolved
+            
+            case _:
+                raise ValueError(f"ERROR: {self._debugname}.resolve_params_notation(): Invalid argument type: {type(paramargs)} for task {self.qidx}")
+
+    def execute(self, context):
+        """initiate the queue on execution, the modal will actually handle the task execution.."""
+
+        # Initialize state variables
+        self.initialize_variables()
+
+        #make sure the queue identifier is set..
+        if (self.queue_identifier not in self.queues):
+            print(f"ERROR: {self._debugname}.execute(): Queue identifier {self.queue_identifier} not found in queue dict.")
+            self.cleanup(context)
+            return {'FINISHED'}
+        self.qactive = self.queues[self.queue_identifier]
+        self._tasks_count = len([k for k in self.qactive if (type(k) is int)])
+
+        #call the queue_callback_pre function, if exists
+        self.exec_callback(context, 'queue_callback_pre')
+
+        debugprint(f"INFO: {self._debugname}.execute(): Starting function queue processing..")
+
+        # Start modal operation to process tasks one by one with UI updates between them
+        self._modal_timer = context.window_manager.event_timer_add(0.01, window=context.window)
+        context.window_manager.modal_handler_add(self)
+        debugprint(f"INFO: {self._debugname}.execute(): Running modal..")
+        return {'RUNNING_MODAL'}
+
+    def exec_callback(self, context, callback_identifier=None,):
+        """call the callback function for the current task."""
+
+        if (callback_identifier not in {'task_callback_post','task_callback_pre','queue_callback_fatal_error','queue_callback_pre','queue_callback_post',}):
+            print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}")
+            return None
+
+        #get the callback function, either stored on task or queue level
+        if callback_identifier.startswith('task_'):
+            callback = self.qactive[self.qidx].get(callback_identifier, None)
+        elif callback_identifier.startswith('queue_'):
+            callback = self.qactive.get(callback_identifier, None)
+        else:
+            print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}. Should always start with 'task_' or 'queue_'")
+            return None
+
+        if (callback is None):
+            return None
+        if (not callable(callback)):
+            print(f"ERROR: {self._debugname}.exec_callback(): Callback function {callback_identifier} is not callable! Please pass a function!")
+            return None
+    
+        #define callback arguments
+        args = (self, context,)
+        #the 'task_callback_post', 'queue_callback_post' recieve the results as arguments
+        match callback_identifier:
+            case 'task_callback_post':
+                args += (self.qactive[self.qidx]['task_result'],)
+            case 'queue_callback_post':
+                result_dict = {k:v['task_result'] for k,v in self.qactive.items() if (type(k) is int)}
+                args += (result_dict,)
+        try:
+            debugprint(f"INFO: {self._debugname}.exec_callback(): Calling Task{self.qidx} '{callback_identifier}' with args: {args}")
+            callback(*args)
+        except Exception as e:
+            print(f"ERROR: {self._debugname}.exec_callback(): Error calling Task{self.qidx} '{callback_identifier}': {e}")
+
+        return None
+
+    def call_blocking_task(self, context) -> bool:
+        """Execute the current task directly, in a blocking manner.
+        return True if the task was executed successfully, False otherwise."""
+
+        try:
+            # call the 'task_callback_pre' function, if exists
+            self.exec_callback(context, 'task_callback_pre')
+
+            # get the function..
+            taskfunc = self.qactive[self.qidx]['task_fn_blocking']
+            if (taskfunc is None):
+                print(f"ERROR: {self._debugname}.call_blocking_task(): Function task{self.qidx} was not found!")
+                return False
+
+            # get the arguments we need to pass to the function
+            args = self.qactive[self.qidx]['task_pos_args']
+            kwargs = self.qactive[self.qidx]['task_kw_args']
+
+            # Resolve any result references in args and kwargs
+            resolved_args = self.resolve_params_notation(args) if args else []
+            resolved_kwargs = self.resolve_params_notation(kwargs) if kwargs else {}
+
+            # Execute the function directly (blocking)
+            debugprint(f"INFO: {self._debugname}.call_blocking_task(): Executing Task{self.qidx}...")
+            result = taskfunc(self, *resolved_args, **resolved_kwargs)
+
+            # Ensure result is always stored as a tuple for consistent indexing
+            if (not isinstance(result, tuple)):
+                result = (result,)
+
+            self.qactive[self.qidx]['task_result'] = result
+
+            # call the 'task_callback_post' function, if exists
+            self.exec_callback(context, 'task_callback_post')
+            
+            debugprint(f"INFO: {self._debugname}.call_blocking_task(): Task{self.qidx} finished! Results: {result}")
+            return True
+
+        except Exception as e:
+            print(f"ERROR: {self._debugname}.call_blocking_task(): Error executing task{self.qidx}: {e}")
+            traceback.print_exc()
+            return False
+
+    def modal(self, context, event):
+
+        # Check if processing is complete
+        if (event.type != 'TIMER'):
+            return {'PASS_THROUGH'}
+
+        # Slow down processing to allow UI updates
+        # that way blender UI have time to breathe.
+        self._modal_timercount += 1
+        if (self._modal_timercount != 10):
+            return {'RUNNING_MODAL'}
+        self._modal_timercount = 0
+
+        # Check if we are at the end of the queue
+        if (self.qidx >= self._tasks_count):
+            self.successful_finish(context)
+            self.cleanup(context)
+            return {'FINISHED'}
+
+        # Execute the current task
+        succeeded = self.call_blocking_task(context)
+        if (not succeeded):
+            self.cleanup(context)
+            return {'FINISHED'}
+
+        # Move to the next task
+        self.qidx += 1
+        return {'RUNNING_MODAL'}
+
+    def successful_finish(self, context):
+        """finish the queue."""
+
+        self._all_successfully_finished = True
+
+        #debug print the result of each queue tasks?
+        global IS_DEBUG
+        if (IS_DEBUG):
+            print(f"INFO: {self._debugname}.finish(): All tasks finished! Results:")
+            for k,v in self.qactive.items():
+                if (type(k) is int):
+                    print(f"     Task{k}: {v['task_result']}")
+
+        return None
+        
+    def cleanup(self, context):
+        """clean up our operator after use."""
+
+        #callback if something went wrong
+        if (not self._all_successfully_finished):
+              self.exec_callback(context, 'queue_callback_fatal_error')
+        else: self.exec_callback(context, 'queue_callback_post')
+
+        #remove timer
+        if (self._modal_timer):
+            context.window_manager.event_timer_remove(self._modal_timer)
+            self._modal_timer = None
+
+        # reset counters & idx's
+        self.qidx = 0
+        self._modal_timercount = 0
+        self._tasks_count = 0
+
+        debugprint(f"INFO: {self._debugname}.cleanup(): clean up done")
+        return None
 
 #   .oooooo.                                                  
 #  d8P'  `Y8b                                                 
@@ -123,7 +389,7 @@ class BackgroundQueueProcessingModalMixin:
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][task_idx][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
     #     'queue_callback_fatal_error': <function>, NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
-    #  },                                                     therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #  },
 
     queues = {}
 
@@ -150,7 +416,7 @@ class BackgroundQueueProcessingModalMixin:
                 continue
 
         if (tasks_count == 0):
-            raise ValueError(f"ERROR: define_background_queue(): No tasks found in queue_data.")
+            raise ValueError(f"ERROR: {cls.__name__}.define_background_queue(): No tasks found in queue_data.")
 
         cls.queues[queue_identifier] = queue_data
         return None
@@ -161,10 +427,10 @@ class BackgroundQueueProcessingModalMixin:
         or run the according bpy.ops with the according queue identifier"""
 
         if (queue_identifier not in cls.queues):
-            raise ValueError(f"ERROR: start_background_queue(): Queue identifier {queue_identifier} not found in queue dict. Make sure to use define_background_queue() classmethod function to define a queue first")
+            raise ValueError(f"ERROR: {cls.__name__}.start_background_queue(): Queue identifier {queue_identifier} not found in queue dict. Make sure to use define_background_queue() classmethod function to define a queue first")
 
         bpy_operator = getattr(bpy.ops, cls.bl_idname)
-        assert bpy_operator, f"ERROR: start_background_queue(): Operator '{cls.bl_idname}' not found in bpy.ops."
+        assert bpy_operator, f"ERROR: {cls.__name__}.start_background_queue(): Operator '{cls.bl_idname}' not found in bpy.ops."
         bpy_operator(queue_identifier=queue_identifier)
 
         return None
@@ -364,14 +630,18 @@ class BackgroundQueueProcessingModalMixin:
 
         return None
 
-    def start_task(self, context) -> bool:
+    def start_background_task(self, context) -> bool:
         """start a task in the pool.
         return True if the task was started successfully, False otherwise."""
 
         try:
-            function_worker = self.qactive[self.qidx]['task_fn_worker']
-            if (function_worker is None):
-                print(f"ERROR: {self._debugname}.start_task(): Function worker task{self.qidx} was not found!")
+            # call the 'task_callback_pre' function, if exists
+            self.exec_callback(context, 'task_callback_pre')
+
+            # get the function..
+            taskfunc = self.qactive[self.qidx]['task_fn_worker']
+            if (taskfunc is None):
+                print(f"ERROR: {self._debugname}.start_background_task(): Function worker task{self.qidx} was not found!")
                 return False
 
             # get the arguments we need to pass to the function
@@ -382,17 +652,14 @@ class BackgroundQueueProcessingModalMixin:
             resolved_args = self.resolve_params_notation(args) if args else []
             resolved_kwargs = self.resolve_params_notation(kwargs) if kwargs else {}
 
-            # call the task_callback_pre function, if exists
-            self.exec_callback(context, 'task_callback_pre')
-
             # Use apply_async instead of map_async - it handles multiple args and kwargs naturally
-            self._pool_result = self._pool.apply_async(function_worker, resolved_args, resolved_kwargs)
+            self._pool_result = self._pool.apply_async(taskfunc, resolved_args, resolved_kwargs)
         
-            debugprint(f"INFO: {self._debugname}.start_task(): Task{self.qidx} started!")
+            debugprint(f"INFO: {self._debugname}.start_background_task(): Task{self.qidx} started!")
             return True
         
         except Exception as e:
-            print(f"ERROR: {self._debugname}.start_task(): Error starting background task{self.qidx}: {e}")
+            print(f"ERROR: {self._debugname}.start_background_task(): Error starting background task{self.qidx}: {e}")
             traceback.print_exc()
             return False
 
@@ -435,7 +702,7 @@ class BackgroundQueueProcessingModalMixin:
                 return {'FINISHED'}
 
             # if not, we start a new task
-            succeeded = self.start_task(context)
+            succeeded = self.start_background_task(context)
             if (not succeeded):
                 self.cleanup(context)
                 return {'FINISHED'}
@@ -607,7 +874,121 @@ class ParallelQueueProcessingModalMixin:
 # o888o o888o o888o o888o  888bod8P' o888o `Y8bod8P
 #                          888                                                                                                                     
 #                         o888o                                                                                                                                                                                                                                                                   
-# Implementation Example
+# Implementation Examples..
+
+##############################
+### Blocking Queue Example ###
+
+def add_monkey(self, ):
+    """Add a monkey (Suzanne) to the scene and return it."""
+    bpy.ops.mesh.primitive_monkey_add(size=1.0, enter_editmode=False, align='WORLD')
+    monkey = bpy.context.active_object
+    time.sleep(1.5)
+    return monkey
+
+def resize_monkey(self, monkey, size):
+    """Resize the monkey to the specified size."""
+    monkey.scale = (size, size, size)
+    time.sleep(1.5)
+    return None
+
+def offset_monkey(self, monkey, y_offset):
+    """Offset the monkey along the Y axis by the specified amount."""
+    monkey.location.y += y_offset
+    time.sleep(1.5)
+    return None
+
+class MULTIPROCESS_OT_myblockingqueue(BlockingQueueProcessingModalMixin, bpy.types.Operator):
+
+    bl_idname = "multiprocess.myblockingqueue"
+    bl_label = "Launch Blocking Tasks"
+    bl_description = "Launch Blocking Tasks"
+
+    queues = {
+        "my_blocking_tasks" : {
+            #define queue tasks
+            0: {
+                'task_pos_args': [],
+                'task_kw_args': {},
+                'task_fn_blocking': add_monkey,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: set_progress('ex1',0.33),
+                'task_callback_post': lambda self, context, result: update_message('ex1',"add_monkey Done!"),
+            },
+            1: {
+                'task_pos_args': ['USE_TASK_RESULT|0|0',2,], #Use result from task 0, index 0 (monkey..)
+                'task_kw_args': {},
+                'task_fn_blocking': resize_monkey,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: set_progress('ex1',0.66),
+                'task_callback_post': lambda self, context, result: update_message('ex1',"resize_monkey Done!"),
+            },
+            2: {
+                'task_pos_args': ['USE_TASK_RESULT|0|0',2,],  #Use result from task 0, index 0 (monkey..)
+                'task_kw_args': {},
+                'task_fn_blocking': offset_monkey,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: set_progress('ex1',0.99),
+                'task_callback_post': lambda self, context, result: update_message('ex1',"offset_monkey Done!"),
+            },
+            #define queue callbacks
+            'queue_callback_pre': lambda self, context: set_progress('ex1',0.1),
+            'queue_callback_post': lambda self, context, results: set_progress('ex1',0),
+            'queue_callback_fatal_error': lambda self, context: update_message('ex1',"Error Occured..."),
+        }
+    }
+
+################################
+### Background Queue Example ###
+
+class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy.types.Operator):
+
+    bl_idname = "multiprocess.mybackgroundqueue"
+    bl_label = "Launch Background Tasks"
+    bl_description = "Launch Background Tasks"
+
+    queues = {
+        "my_background_tasks" : {
+            #define queue tasks
+            0: {
+                'task_script_path': os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_standalone_worker.py"),
+                'task_pos_args': [3,],
+                'task_kw_args': {},
+                'task_fn_name': "mytask",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
+                'task_callback_post': lambda self, context, result: update_message('ex2',"Very Nice!"),
+            },
+            1: {
+                'task_script_path': os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_standalone_worker.py"),
+                'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, index 0
+                'task_kw_args': {"printhis": "Hello There!"},
+                'task_fn_name': "mytask",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
+                'task_callback_post': lambda self, context, result: update_message('ex2',"King of the Castle!"),
+            },
+            2: {
+                'task_script_path': os.path.join(os.path.dirname(__file__), "backgroundtasks", "another_test.py"),
+                'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, index 0
+                'task_kw_args': {},
+                'task_fn_name': "myfoo",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
+                'task_callback_post': lambda self, context, result: update_message('ex2',"Done!"),
+            },
+            #define queue callbacks
+            'queue_callback_pre': lambda self, context: print("Callback: Before queue"),
+            'queue_callback_post': lambda self, context, results: update_message('ex2',"All Done!"),
+            'queue_callback_fatal_error': lambda self, context: update_message('ex2',"Error Occured..."),
+        }
+    }
+
+#################################
+####### Rough GUI Example #######
 
 def tag_redraw_all():
     for window in bpy.context.window_manager.windows:
@@ -615,11 +996,23 @@ def tag_redraw_all():
             area.tag_redraw()
     return None
 
-MYMESSAGE = "Hello There!"
+MYMESSAGES = {
+    'ex1': "Blocking Queue Infos..",
+    'ex2': "Background Queue Infos..",
+    'ex3': "Parallel Queues Infos..",
+    }
+def update_message(identifier, newmessage,):
+    MYMESSAGES[identifier] = newmessage
+    tag_redraw_all()
+    return None
 
-def update_message(message):
-    global MYMESSAGE
-    MYMESSAGE = message
+MYPROGRESS = {
+    'ex1': 0,
+    'ex2': 0,
+    'ex3': 0,
+    }
+def set_progress(identifier, progress):
+    MYPROGRESS[identifier] = progress
     tag_redraw_all()
     return None
 
@@ -634,65 +1027,36 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
-        button = layout.column()
+        #Example 1: blocking queue, has access to bpy tho.
+        box = layout.box()
+        button = box.column()
+        button.scale_y = 1.3
+        op = button.operator("multiprocess.myblockingqueue", text="Launch Blocking Queue!", icon='PLAY')
+        op.queue_identifier = "my_blocking_tasks"
+        #
+        box.separator(type='LINE')
+        if MYPROGRESS['ex1']>0:
+            box.progress(text=MYMESSAGES['ex1'], factor=MYPROGRESS['ex1'], type='BAR')
+        else:
+            box.label(text=MYMESSAGES['ex1'])
+
+        #Example 2: Non blocking background queue, no access to bpy..
+        box = layout.box()
+        button = box.column()
         button.scale_y = 1.3
         op = button.operator("multiprocess.mybackgroundqueue", text="Launch Background Queue!", icon='PLAY')
-        op.queue_identifier = "my_series_of_tasks"
-
-        layout.separator(type='LINE')
-        layout.label(text=MYMESSAGE)
+        op.queue_identifier = "my_background_tasks"
+        #
+        box.separator(type='LINE')
+        box.label(text=MYMESSAGES['ex2'])
+        
+        #Example 3: Parallel queue, no access to bpy..
+        #TODO..
 
         return None
 
-BACKGROUND_TASKS_DIR = os.path.join(os.path.dirname(__file__), "backgroundtasks")
-
-class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy.types.Operator):
-    
-    bl_idname = "multiprocess.mybackgroundqueue"
-    bl_label = "Launch Background Tasks"
-    bl_description = "Launch Background Tasks"
-
-    queues = {
-        "my_series_of_tasks" : {
-            #define queue tasks
-            0: {
-                'task_script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
-                'task_pos_args': [3,],
-                'task_kw_args': {},
-                'task_fn_name': "mytask",
-                'task_fn_worker': None,
-                'task_result': None,
-                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
-                'task_callback_post': lambda self, context, result: update_message("Very Nice!"),
-            },
-            1: {
-                'task_script_path': os.path.join(BACKGROUND_TASKS_DIR, "my_standalone_worker.py"),
-                'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, index 0
-                'task_kw_args': {"printhis": "Hello There!"},
-                'task_fn_name': "mytask",
-                'task_fn_worker': None,
-                'task_result': None,
-                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
-                'task_callback_post': lambda self, context, result: update_message("King of the Castle!"),
-            },
-            2: {
-                'task_script_path': os.path.join(BACKGROUND_TASKS_DIR, "another_test.py"),
-                'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, index 0
-                'task_kw_args': {},
-                'task_fn_name': "myfoo",
-                'task_fn_worker': None,
-                'task_result': None,
-                'task_callback_pre': lambda self, context: print("task_callback_pre..."),
-                'task_callback_post': lambda self, context, result: update_message("Done!"),
-            },
-            #define queue callbacks
-            'queue_callback_pre': lambda self, context: print("Callback: Before queue"),
-            'queue_callback_post': lambda self, context, results: update_message("All Done!"),
-            'queue_callback_fatal_error': lambda self, context: update_message("Error Occured..."),
-        }
-    }
-
 classes = [
+    MULTIPROCESS_OT_myblockingqueue,
     MULTIPROCESS_OT_mybackgroundqueue,
     MULTIPROCESS_PT_panel,
     ]
