@@ -9,8 +9,8 @@ bl_info = {
 }
 
 #TODO
-#-automatically import modules on plugin init and put it on globals.. no more exec(f"import {modulename}", globals()) for every function gathering.. load globals once on plugsess init
-#-add op.is_cancelling = True option and op.cancel() which will add a cancel flag to the queue dict
+#- Can't launch multiple queue of same identifiers simultaneously. 
+#  Either some sort of 'is_queue/pile_running' flag, or, automatically cancel. then need to add a cancelling option sucj as op.is_cancelling???
 
 import bpy
 
@@ -352,47 +352,123 @@ class BlockingQueueProcessingModalMixin:
 #  8    Y     888   888   888   888    888 .  888   888          888     888   888 888   .o8 888    .o o.  )88b o.  )88b  888   888   888  `88bod8P'  
 # o8o        o888o  `V88V"V8P' o888o   "888" o888o o888o        d888b    `Y8bod8P' `Y8bod8P' `Y8bod8P' 8""888P' 8""888P' o888o o888o o888o `8oooooo.  
 #                                                                                                                                          d"     YD  
-#                                                                                                                                          "Y88888P'  
+# Here we handle the set up of our multiprocessing pool, and we store our independent worker elements                                      "Y88888P'  
 
 import sys
+import importlib
 import multiprocessing
 
-#TODO improve this..
-BACKGROUND_TASKS_MODULE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backgroundtasks")
-assert os.path.exists(BACKGROUND_TASKS_MODULE), f"Background tasks module not found: {BACKGROUND_TASKS_MODULE}"
+WORKER_MODULES = {}
+WORKER_MODULES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backgroundtasks")
 
 MULTIPROCESSING_ALLOCATED_CORES = -1
 MULTIPROCESSING_POOL = None
 
-def init_multiprocessing(process_alloc=90):
-    """start a new multiprocessing pool, used in this plugin."""    
-    global MULTIPROCESSING_ALLOCATED_CORES, MULTIPROCESSING_POOL
+def multiproc_set_worker_items():
+    """store all the modules meant to be used as a background task in one dict.
+    We do that once for all our independent modules and functions made for multiprocessing.
+    That way we don't constantly import all functions call on runtime, just on plugin init."""
 
-    # insert a new path to sys.path, so the background tasks module can be found by the 
-    # multiprocessing module.. as it will copy the sys.path list to a new process outside of GIL..
-    sys.path.insert(0, BACKGROUND_TASKS_MODULE)
-    
-    #calculate the number of cores to use, and start a new pool.
-    MULTIPROCESSING_ALLOCATED_CORES = max(1, int(multiprocessing.cpu_count() * process_alloc/100))
-    MULTIPROCESSING_POOL = multiprocessing.get_context('spawn').Pool(MULTIPROCESSING_ALLOCATED_CORES)
+    global WORKER_MODULES
+    for dirpath, dirnames, filenames in os.walk(WORKER_MODULES_FOLDER):
+        for filename in filenames:
+            if (filename.endswith('.py')):
+                modulename = filename.replace(".py", "")
+
+                # We procedurally import that module
+                try:
+                    importline = f"import {modulename}"
+                    catch = {}
+                    exec(importline, catch)
+                    module = catch[modulename]
+                except Exception as e:
+                    print(f"ERROR: register.multiproc_init.multiproc_set_worker_items(): Something went wrong while importing {modulename}: {e}")
+                    return None
+
+                # Find all the top-level functions from that module
+                module_functions = {}
+                for name, obj in vars(module).items():
+                    if callable(obj) and not name.startswith('_'):
+                        module_functions[name] = obj
+
+                # We store that module and it's independent functions 
+                if (len(module_functions)==0):
+                    print(f"WARNING: register.multiproc_init.multiproc_set_worker_items(): No functions found in module '{filename}'")
+                    continue
+                WORKER_MODULES[filename] = {"module": module, "functions": module_functions,}
+                print(f"INFO: register.multiproc_init.multiproc_set_worker_items(): Found functions {list(module_functions.keys())} in module '{filename}'")
+
+                continue
 
     return None
 
-def deinit_multiprocessing():
+def multiproc_get_worker_fct(module_path, function_name):
+    """temporarily add module to sys.path, so it can be found by multiprocessing, 
+    clearing our any potential bl_ext dependencies issues"""
+
+    # Get our independent module
+    worker_itm = WORKER_MODULES.get(module_path)
+    if (not worker_itm):
+        print(f"ERROR: multiproc_get_worker_fct(): Module '{module_path}' not found. An error must've happened earlier at plugin register during multiproc_set_worker_items().")
+        return None
+
+    # Find our independent worker function
+    function_worker = worker_itm['functions'].get(function_name, None)
+    if (not function_worker):
+        print(f"ERROR: multiproc_get_worker_fct(): Function '{function_name}' does not exist in '{module_path}'. make sure it's found in the first level of this module.")
+        return None
+    # safety check..
+    if (not callable(function_worker)):
+        print(f"ERROR: multiproc_get_worker_fct(): Function '{function_name}' in '{module_path}' is not a function...")
+        return None
+
+    return function_worker
+
+def multiproc_init(process_alloc=90):
+    """start a new multiprocessing pool, used in this plugin."""
+
+    # insert a new path to sys.path, so the background tasks module can be found by the 
+    # multiprocessing module.. as it will copy the sys.path list to a new process outside of GIL..
+    global WORKER_MODULES_FOLDER
+    if (not os.path.exists(WORKER_MODULES_FOLDER)):
+        print(f"ERROR: register.multiproc_init(): Background tasks folder not found, multiprocessing couldn't initiate.. Expect errors..: {WORKER_MODULES_FOLDER}")
+        return None
+    sys.path.insert(0, WORKER_MODULES_FOLDER)
+    
+    # calculate the number of cores to use
+    global MULTIPROCESSING_ALLOCATED_CORES
+    MULTIPROCESSING_ALLOCATED_CORES = max(1, int(multiprocessing.cpu_count() * process_alloc/100))
+    
+    # and start a new pool.
+    global MULTIPROCESSING_POOL
+    MULTIPROCESSING_POOL = multiprocessing.get_context('spawn').Pool(MULTIPROCESSING_ALLOCATED_CORES)
+
+    # store all the modules in the background tasks
+    multiproc_set_worker_items()
+
+    return None
+
+def multiproc_deinit():
     """destroy the multiprocessing pool, used in this plugin."""
-    global MULTIPROCESSING_ALLOCATED_CORES, MULTIPROCESSING_POOL
 
     # pool's closed (due to..)
+    global MULTIPROCESSING_POOL
     MULTIPROCESSING_POOL.close()
     MULTIPROCESSING_POOL.join()
     MULTIPROCESSING_POOL = None
 
-    #reset the working cores
+    # reset the working cores
+    global MULTIPROCESSING_ALLOCATED_CORES
     MULTIPROCESSING_ALLOCATED_CORES = -1
 
-    #remove temp module from sys.path
-    if (BACKGROUND_TASKS_MODULE in sys.path):
-        sys.path.remove(BACKGROUND_TASKS_MODULE)
+    # remove temp module from sys.path
+    global WORKER_MODULES_FOLDER
+    if (WORKER_MODULES_FOLDER in sys.path):
+        sys.path.remove(WORKER_MODULES_FOLDER)
+    
+    # remove the worker items
+    global WORKER_MODULES
+    WORKER_MODULES = {}
 
     return None
 
@@ -503,49 +579,26 @@ class BackgroundQueueProcessingModalMixin:
         
         return None
 
-    def import_worker_fct(self, modulename, function_name):
-        """temporarily add module to sys.path, so it can be found by multiprocessing, 
-        clearing our any potential bl_ext dependencies issues"""
-        
-        # TODO: IMPROVEMENTS:
-        # procedurally import all the worker modules on plugin init..
-        # Import the standalone worker module
-        try:
-            modulename = modulename.replace(".py", "")
-            exec(f"import {modulename}", globals())
-            module_worker = globals()[modulename]
-        except Exception as e:
-            print(f"ERROR: {self._debugname}.import_worker_fct(): Something went wrong while importing {modulename}: {e}")
-            return None
-
-        # Find our function
-        function_worker = getattr(module_worker, function_name, None)
-        if (not function_worker):
-            print(f"ERROR: {self._debugname}.import_worker_fct(): Function {function_name} does not exist in {modulename}. make sure it's found in the first level of this module.")
-            return None
-
-        return function_worker
-
-    def collect_worker_fcts(self, context) -> bool:
-        """create a queue of functions to be executed. 
+    def collect_tasks(self, context) -> bool:
+        """collect all independent functions to be executed and place them back into the queue. 
         return True if all worker functions were found, False if there was an error otherwise."""
 
         all_tasks_count = 0
-        valid_tasks_found_count = 0
+        valid_tasks_count = 0
 
         for k,v in self.qactive.items():
             if (type(k) is int):
                 all_tasks_count += 1
-                function_worker = self.import_worker_fct(v['task_modu_name'], v['task_fn_name'])
-                if callable(function_worker):
+                function_worker = multiproc_get_worker_fct(v['task_modu_name'], v['task_fn_name'])
+                if (function_worker):
                     self.qactive[k]['task_fn_worker'] = function_worker
-                    valid_tasks_found_count += 1
+                    valid_tasks_count += 1
 
-        if (all_tasks_count != valid_tasks_found_count):
-            print(f"ERROR: {self._debugname}.collect_worker_fcts(): Something went wrong. We couldn't import all the worker functions for your queue.")
+        if (all_tasks_count != valid_tasks_count):
+            print(f"ERROR: {self._debugname}.collect_tasks(): Something went wrong. We couldn't import all the worker functions for your queue.")
             return False
 
-        self._tasks_count = valid_tasks_found_count
+        self._tasks_count = valid_tasks_count
         return True
 
     def resolve_params_notation(self, paramargs):
@@ -611,7 +664,7 @@ class BackgroundQueueProcessingModalMixin:
         try:            
 
             # create the function queue
-            succeeded = self.collect_worker_fcts(context)
+            succeeded = self.collect_tasks(context)
             if (not succeeded):
                 self.cleanup(context)
                 return {'FINISHED'}
@@ -927,49 +980,26 @@ class ParallelQueueProcessingModalMixin:
         
         return None
 
-    def import_worker_fct(self, modulename, function_name):
-        """temporarily add module to sys.path, so it can be found by multiprocessing, 
-        clearing our any potential bl_ext dependencies issues"""
-        
-        # TODO: IMPROVEMENTS:
-        # procedurally import all the worker modules on plugin init..
-        # Import the standalone worker module
-        try:
-            modulename = modulename.replace(".py", "")
-            exec(f"import {modulename}", globals())
-            module_worker = globals()[modulename]
-        except Exception as e:
-            print(f"ERROR: {self._debugname}.import_worker_fct(): Something went wrong while importing {modulename}: {e}")
-            return None
-
-        # Find our function
-        function_worker = getattr(module_worker, function_name, None)
-        if (not function_worker):
-            print(f"ERROR: {self._debugname}.import_worker_fct(): Function {function_name} does not exist in {modulename}. make sure it's found in the first level of this module.")
-            return None
-
-        return function_worker
-
-    def collect_worker_fcts(self, context) -> bool:
-        """create a queue of functions to be executed. 
+    def collect_tasks(self, context) -> bool:
+        """collect all independent functions to be executed and place them back into the taskpile. 
         return True if all worker functions were found, False if there was an error otherwise."""
 
         all_tasks_count = 0
-        valid_tasks_found_count = 0
+        valid_tasks_count = 0
 
         for k,v in self.pileactive.items():
             if (type(k) is int):
                 all_tasks_count += 1
-                function_worker = self.import_worker_fct(v['task_modu_name'], v['task_fn_name'])
-                if callable(function_worker):
+                function_worker = multiproc_get_worker_fct(v['task_modu_name'], v['task_fn_name'])
+                if (function_worker):
                     self.pileactive[k]['task_fn_worker'] = function_worker
-                    valid_tasks_found_count += 1
+                    valid_tasks_count += 1
 
-        if (all_tasks_count != valid_tasks_found_count):
-            print(f"ERROR: {self._debugname}.collect_worker_fcts(): Something went wrong. We couldn't import all the worker functions for your taskpile.")
+        if (all_tasks_count != valid_tasks_count):
+            print(f"ERROR: {self._debugname}.collect_tasks(): Something went wrong. We couldn't import all the worker functions for your taskpile.")
             return False
 
-        self._tasks_count = valid_tasks_found_count
+        self._tasks_count = valid_tasks_count
         return True
 
     def build_dependency_graph(self):
@@ -1074,7 +1104,7 @@ class ParallelQueueProcessingModalMixin:
         try:            
 
             # create the function queue
-            succeeded = self.collect_worker_fcts(context)
+            succeeded = self.collect_tasks(context)
             if (not succeeded):
                 self.cleanup(context)
                 return {'FINISHED'}
@@ -1730,7 +1760,7 @@ def register():
     def wait_restrict_state_timer():
         if (str(bpy.context).startswith("<bpy_restrict_state")): 
             return 0.05
-        init_multiprocessing(process_alloc=90)
+        multiproc_init(process_alloc=90)
         return None
     bpy.app.timers.register(wait_restrict_state_timer)
 
@@ -1742,4 +1772,4 @@ def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     
-    deinit_multiprocessing()
+    multiproc_deinit()
