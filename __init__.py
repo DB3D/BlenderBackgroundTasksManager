@@ -9,7 +9,7 @@ bl_info = {
 }
 
 #TODO
-#-automatically import modules on plugin init and put it on globals
+#-automatically import modules on plugin init and put it on globals.. no more exec(f"import {modulename}", globals()) for every function gathering.. load globals once on plugsess init
 #-add op.is_cancelling = True option and op.cancel() which will add a cancel flag to the queue dict
 
 import bpy
@@ -429,7 +429,7 @@ class BackgroundQueueProcessingModalMixin:
     ################### Expected format: ###################
     #  <queue_identifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
     #     <taskindex>: {       NOTE: The task index, int starting at 0.
-    #         'task_script_path': <path/to/script.py>,         NOTE: The script path where your function is located. This module shall be totally indpeendent from blender!
+    #         'task_modu_name': <myscript.py>,                 NOTE: The script name where your function is located. This module shall be totally independent from blender and make no use of bpy!
     #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
     #         'task_kw_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'USE_TASK_RESULT|<taskindex>|<result_index>'
     #         'task_fn_name': "<task_fn_name>",                NOTE: The name of the function you wish to execute in background
@@ -457,7 +457,7 @@ class BackgroundQueueProcessingModalMixin:
             if (type(k) is int):
 
                 #ensure these values exists
-                assert 'task_script_path' in v, f"ERROR: define_background_queue(): 'task_script_path' is required in queue_data."
+                assert 'task_modu_name' in v, f"ERROR: define_background_queue(): 'task_modu_name' is required in queue_data."
                 assert 'task_pos_args' in v, f"ERROR: define_background_queue(): 'task_pos_args' is required in queue_data."
                 assert 'task_kw_args' in v, f"ERROR: define_background_queue(): 'task_kw_args' is required in queue_data."
                 assert 'task_fn_name' in v, f"ERROR: define_background_queue(): 'task_fn_name' is required in queue_data."
@@ -503,19 +503,15 @@ class BackgroundQueueProcessingModalMixin:
         
         return None
 
-    def import_worker_fct(self, modulefile, function_name):
+    def import_worker_fct(self, modulename, function_name):
         """temporarily add module to sys.path, so it can be found by multiprocessing, 
         clearing our any potential bl_ext dependencies issues"""
-
-        if (not os.path.exists(modulefile)):
-            print(f"WARNING: {self._debugname}.import_worker_fct(): Module path does not exist: ", modulefile)
-            return None
         
         # TODO: IMPROVEMENTS:
         # procedurally import all the worker modules on plugin init..
         # Import the standalone worker module
-        modulename = os.path.basename(modulefile).replace(".py", "")
         try:
+            modulename = modulename.replace(".py", "")
             exec(f"import {modulename}", globals())
             module_worker = globals()[modulename]
         except Exception as e:
@@ -525,7 +521,7 @@ class BackgroundQueueProcessingModalMixin:
         # Find our function
         function_worker = getattr(module_worker, function_name, None)
         if (not function_worker):
-            print(f"ERROR: {self._debugname}.import_worker_fct(): Function {function_name} does not exist in {modulefile}. make sure it's found in the first level of this module.")
+            print(f"ERROR: {self._debugname}.import_worker_fct(): Function {function_name} does not exist in {modulename}. make sure it's found in the first level of this module.")
             return None
 
         return function_worker
@@ -540,7 +536,7 @@ class BackgroundQueueProcessingModalMixin:
         for k,v in self.qactive.items():
             if (type(k) is int):
                 all_tasks_count += 1
-                function_worker = self.import_worker_fct(v['task_script_path'], v['task_fn_name'])
+                function_worker = self.import_worker_fct(v['task_modu_name'], v['task_fn_name'])
                 if callable(function_worker):
                     self.qactive[k]['task_fn_worker'] = function_worker
                     valid_tasks_found_count += 1
@@ -855,7 +851,7 @@ class ParallelQueueProcessingModalMixin:
     ################### Expected format: ###################
     #  <taskpile_identifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.taskpile_identifier
     #     <taskindex>: {       NOTE: The task index, int starting at 0.
-    #         'task_script_path': <path/to/script.py>,         NOTE: The script path where your function is located. This module shall be totally indpeendent from blender!
+    #         'task_modu_name': <myscript.py>,                 NOTE: The script name where your function is located. This module shall be totally independent from blender and make no use of bpy!
     #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
     #         'task_kw_args': {'<kwarg_name>': <kwarg_value>},       if you'd like to reuse result from a previous task, use notation 'USE_TASK_RESULT|<taskindex>|<result_index>' by doing so, paralellization won't be possible for this task!!!
     #         'task_fn_name': "<task_fn_name>",                NOTE: The name of the function you wish to execute in background
@@ -883,7 +879,7 @@ class ParallelQueueProcessingModalMixin:
             if (type(k) is int):
 
                 #ensure these values exists
-                assert 'task_script_path' in v, f"ERROR: define_parallel_taskpile(): 'task_script_path' is required in taskpile_data."
+                assert 'task_modu_name' in v, f"ERROR: define_parallel_taskpile(): 'task_modu_name' is required in taskpile_data."
                 assert 'task_pos_args' in v, f"ERROR: define_parallel_taskpile(): 'task_pos_args' is required in taskpile_data."
                 assert 'task_kw_args' in v, f"ERROR: define_parallel_taskpile(): 'task_kw_args' is required in taskpile_data."
                 assert 'task_fn_name' in v, f"ERROR: define_parallel_taskpile(): 'task_fn_name' is required in taskpile_data."
@@ -931,19 +927,15 @@ class ParallelQueueProcessingModalMixin:
         
         return None
 
-    def import_worker_fct(self, modulefile, function_name):
+    def import_worker_fct(self, modulename, function_name):
         """temporarily add module to sys.path, so it can be found by multiprocessing, 
         clearing our any potential bl_ext dependencies issues"""
-
-        if (not os.path.exists(modulefile)):
-            print(f"WARNING: {self._debugname}.import_worker_fct(): Module path does not exist: ", modulefile)
-            return None
         
         # TODO: IMPROVEMENTS:
         # procedurally import all the worker modules on plugin init..
         # Import the standalone worker module
-        modulename = os.path.basename(modulefile).replace(".py", "")
         try:
+            modulename = modulename.replace(".py", "")
             exec(f"import {modulename}", globals())
             module_worker = globals()[modulename]
         except Exception as e:
@@ -953,7 +945,7 @@ class ParallelQueueProcessingModalMixin:
         # Find our function
         function_worker = getattr(module_worker, function_name, None)
         if (not function_worker):
-            print(f"ERROR: {self._debugname}.import_worker_fct(): Function {function_name} does not exist in {modulefile}. make sure it's found in the first level of this module.")
+            print(f"ERROR: {self._debugname}.import_worker_fct(): Function {function_name} does not exist in {modulename}. make sure it's found in the first level of this module.")
             return None
 
         return function_worker
@@ -968,7 +960,7 @@ class ParallelQueueProcessingModalMixin:
         for k,v in self.pileactive.items():
             if (type(k) is int):
                 all_tasks_count += 1
-                function_worker = self.import_worker_fct(v['task_script_path'], v['task_fn_name'])
+                function_worker = self.import_worker_fct(v['task_modu_name'], v['task_fn_name'])
                 if callable(function_worker):
                     self.pileactive[k]['task_fn_worker'] = function_worker
                     valid_tasks_found_count += 1
@@ -1422,7 +1414,7 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
         "my_background_tasks" : {
             #define queue tasks
             0: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_standalone_worker.py"),
+                'task_modu_name': "my_standalone_worker.py",
                 'task_pos_args': [3,],
                 'task_kw_args': {},
                 'task_fn_name': "mytask",
@@ -1432,7 +1424,7 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
                 'task_callback_post': lambda self, context, result: update_message('ex2',"Very Nice!"),
             },
             1: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_standalone_worker.py"),
+                'task_modu_name': "my_standalone_worker.py",
                 'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, index 0
                 'task_kw_args': {"printhis": "Hello There!"},
                 'task_fn_name': "mytask",
@@ -1442,7 +1434,7 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
                 'task_callback_post': lambda self, context, result: update_message('ex2',"King of the Castle!"),
             },
             2: {
-                'task_script_path': os.path.join(os.path.dirname(__file__), "backgroundtasks", "another_test.py"),
+                'task_modu_name': "another_test.py",
                 'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, index 0
                 'task_kw_args': {},
                 'task_fn_name': "myfoo",
@@ -1471,7 +1463,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
         "my_complex_parallel_tasks" : {
             # Wave 0: 5 independent solo tasks (run in parallel)
             0: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [1, "DataA"],
                 'task_kw_args': {"delay": 2.0},
                 'task_fn_name': "process_data",
@@ -1481,7 +1473,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(0, "completed"),
             },
             1: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [2, "DataB"],
                 'task_kw_args': {"delay": 1.5},
                 'task_fn_name': "process_data",
@@ -1491,7 +1483,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(1, "completed"),
             },
             2: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [3, "DataC"],
                 'task_kw_args': {"delay": 2.5},
                 'task_fn_name': "process_data",
@@ -1501,7 +1493,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(2, "completed"),
             },
             3: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [4, "DataD"],
                 'task_kw_args': {"delay": 1.0},
                 'task_fn_name': "process_data",
@@ -1511,7 +1503,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(3, "completed"),
             },
             4: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [5, "DataE"],
                 'task_kw_args': {"delay": 1.8},
                 'task_fn_name': "process_data",
@@ -1523,7 +1515,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
             
             # Wave 1: 2 tasks that depend on solo tasks (queue level 1)
             5: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': ['USE_TASK_RESULT|0|0', 'USE_TASK_RESULT|1|0'],  # Depends on tasks 0 and 1
                 'task_kw_args': {"operation": "combine"},
                 'task_fn_name': "combine_results",
@@ -1533,7 +1525,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(5, "completed"),
             },
             6: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': ['USE_TASK_RESULT|2|0', 'USE_TASK_RESULT|3|0', 'USE_TASK_RESULT|4|0'],  # Depends on tasks 2, 3, 4
                 'task_kw_args': {"operation": "merge"},
                 'task_fn_name': "combine_results",
@@ -1545,7 +1537,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
             
             # Wave 2: 2 final tasks that depend on the queue results (queue level 2)
             7: {
-                'task_script_path':  os.path.join(os.path.dirname(__file__), "backgroundtasks", "my_parallel_worker.py"),
+                'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': ['USE_TASK_RESULT|5|0', 'USE_TASK_RESULT|6|0'],  # Depends on task 5,6 results
                 'task_kw_args': {},
                 'task_fn_name': "analyze_data",
