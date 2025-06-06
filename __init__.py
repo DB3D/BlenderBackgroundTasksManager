@@ -1726,8 +1726,13 @@ classes = [
 
 def register():
 
-    #create a new multiprocessing pool with 90% of the available cores
-    init_multiprocessing(process_alloc=90)
+    #create a new multiprocessing pool with 90% of the available cores (when blender is done initializing..)
+    def wait_restrict_state_timer():
+        if (str(bpy.context).startswith("<bpy_restrict_state")): 
+            return 0.05
+        init_multiprocessing(process_alloc=90)
+        return None
+    bpy.app.timers.register(wait_restrict_state_timer)
 
     for cls in classes:
         bpy.utils.register_class(cls)
