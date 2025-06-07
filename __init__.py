@@ -87,45 +87,47 @@ class BlockingQueueProcessingModalMixin:
     queues = {}
     #running_queues = [] #list of <queue_identifier> currently being ran. #unused, blocking operators don't support multi running queues..
 
-    @classmethod
-    def define_blocking_queue(cls, queue_identifier:str, queue_data:dict):
-        """Add a queue to the class. Meant for public use.
-        or define class.queues[queue_identifier] - .. yourself"""
+    if False: # NOTE: Easy class utils functions? Currently unused. 
 
-        tasks_count = 0
-        for k,v in queue_data.items():
-            if (type(k) is int):
-
-                #ensure these values exists
-                assert 'task_pos_args' in v, f"ERROR: define_blocking_queue(): 'task_pos_args' is required in queue_data."
-                assert 'task_kw_args' in v, f"ERROR: define_blocking_queue(): 'task_kw_args' is required in queue_data."
-                assert 'task_fn_blocking' in v, f"ERROR: define_blocking_queue(): 'task_fn_blocking' is required in queue_data."
-
-                #ensure these two values are by default always set to None
-                v['task_result'] = None
-
-                tasks_count += 1
-                continue
-
-        if (tasks_count == 0):
-            raise ValueError(f"ERROR: {cls.__name__}.define_blocking_queue(): No tasks found in queue_data.")
-
-        cls.queues[queue_identifier] = queue_data
-        return None
-
-    @classmethod
-    def start_blocking_queue(cls, queue_identifier:str):
-        """Start a queue of blocking tasks. Will run bpy.ops. Meant for public use.
-        or run the according bpy.ops with the according queue identifier"""
-
-        if (queue_identifier not in cls.queues):
-            raise ValueError(f"ERROR: {cls.__name__}.start_blocking_queue(): Queue identifier '{queue_identifier}' not found in queue dict. Make sure to use define_blocking_queue() classmethod function to define a queue first")
-
-        bpy_operator = getattr(bpy.ops, cls.bl_idname)
-        assert bpy_operator, f"ERROR: {cls.__name__}.start_blocking_queue(): Operator '{cls.bl_idname}' not found in bpy.ops."
-        bpy_operator(queue_identifier=queue_identifier)
-
-        return None
+        @classmethod
+        def define_blocking_queue(cls, queue_identifier:str, queue_data:dict):
+            """Add a queue to the class. Meant for public use.
+            or define class.queues[queue_identifier] - .. yourself"""
+        
+            tasks_count = 0
+            for k,v in queue_data.items():
+                if (type(k) is int):
+        
+                    #ensure these values exists
+                    assert 'task_pos_args' in v, f"ERROR: define_blocking_queue(): 'task_pos_args' is required in queue_data."
+                    assert 'task_kw_args' in v, f"ERROR: define_blocking_queue(): 'task_kw_args' is required in queue_data."
+                    assert 'task_fn_blocking' in v, f"ERROR: define_blocking_queue(): 'task_fn_blocking' is required in queue_data."
+        
+                    #ensure these two values are by default always set to None
+                    v['task_result'] = None
+        
+                    tasks_count += 1
+                    continue
+        
+            if (tasks_count == 0):
+                raise ValueError(f"ERROR: {cls.__name__}.define_blocking_queue(): No tasks found in queue_data.")
+        
+            cls.queues[queue_identifier] = queue_data
+            return None
+        
+        @classmethod
+        def start_blocking_queue(cls, queue_identifier:str):
+            """Start a queue of blocking tasks. Will run bpy.ops. Meant for public use.
+            or run the according bpy.ops with the according queue identifier"""
+        
+            if (queue_identifier not in cls.queues):
+                raise ValueError(f"ERROR: {cls.__name__}.start_blocking_queue(): Queue identifier '{queue_identifier}' not found in queue dict. Make sure to use define_blocking_queue() classmethod function to define a queue first")
+        
+            bpy_operator = getattr(bpy.ops, cls.bl_idname)
+            assert bpy_operator, f"ERROR: {cls.__name__}.start_blocking_queue(): Operator '{cls.bl_idname}' not found in bpy.ops."
+            bpy_operator(queue_identifier=queue_identifier)
+        
+            return None
 
     @classmethod
     def is_running(cls, queue_identifier:str) -> bool:
@@ -140,7 +142,7 @@ class BlockingQueueProcessingModalMixin:
         self._modal_timer = None #the modal timer item
         self._modal_timercount = 0 #counter to slow down modal execution to give Blender UI time to update
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
-        self._all_successfully_finished = False #flag to check if the queue was successfully finished.
+        self._allfinished = False #flag to check if the queue was successfully finished.
 
         self.qactive = None #the queue of tasks corresponding to the queue identifier, a dict of tasks of worker functions to be executed
         self.qidx = 0 #the current index of the task that is being executed
@@ -318,7 +320,7 @@ class BlockingQueueProcessingModalMixin:
 
         # Check if we are at the end of the queue
         if (self.qidx >= self._tasks_count):
-            self.successful_finish(context)
+            self.successfinish(context)
             self.cleanup(context)
             return {'FINISHED'}
 
@@ -332,10 +334,10 @@ class BlockingQueueProcessingModalMixin:
         self.qidx += 1
         return {'RUNNING_MODAL'}
 
-    def successful_finish(self, context):
+    def successfinish(self, context):
         """finish the queue."""
 
-        self._all_successfully_finished = True
+        self._allfinished = True
 
         #debug print the result of each queue tasks?
         global IS_DEBUG
@@ -351,7 +353,7 @@ class BlockingQueueProcessingModalMixin:
         """clean up our operator after use."""
 
         #callback if something went wrong
-        if (not self._all_successfully_finished):
+        if (not self._successfully_finished):
               self.exec_callback(context, 'queue_callback_fatalerror')
         else: self.exec_callback(context, 'queue_callback_post')
 
@@ -554,47 +556,49 @@ class BackgroundQueueProcessingModalMixin:
     queues = {}
     running_queues = [] #list of <queue_identifier> currently being ran.
 
-    @classmethod
-    def define_background_queue(cls, queue_identifier:str, queue_data:dict):
-        """Add a queue to the class. Meant for public use.
-        or define class.queues[queue_identifier] - .. yourself"""
+    if False: # NOTE: Easy class utils functions? Currently unused. 
 
-        tasks_count = 0
-        for k,v in queue_data.items():
-            if (type(k) is int):
-
-                #ensure these values exists
-                assert 'task_modu_name' in v, f"ERROR: define_background_queue(): 'task_modu_name' is required in queue_data."
-                assert 'task_pos_args' in v, f"ERROR: define_background_queue(): 'task_pos_args' is required in queue_data."
-                assert 'task_kw_args' in v, f"ERROR: define_background_queue(): 'task_kw_args' is required in queue_data."
-                assert 'task_fn_name' in v, f"ERROR: define_background_queue(): 'task_fn_name' is required in queue_data."
-
-                #ensure these two values are by default always set to None
-                v['task_fn_worker'] = None
-                v['task_result'] = None
-
-                tasks_count += 1
-                continue
-
-        if (tasks_count == 0):
-            raise ValueError(f"ERROR: {cls.__name__}.define_background_queue(): No tasks found in queue_data.")
-
-        cls.queues[queue_identifier] = queue_data
-        return None
-
-    @classmethod
-    def start_background_queue(cls, queue_identifier:str):
-        """Start a queue of background tasks. Will run bpy.ops. Meant for public use.
-        or run the according bpy.ops with the according queue identifier"""
-
-        if (queue_identifier not in cls.queues):
-            raise ValueError(f"ERROR: {cls.__name__}.start_background_queue(): Queue identifier '{queue_identifier}' not found in queue dict. Make sure to use define_background_queue() classmethod function to define a queue first")
-
-        bpy_operator = getattr(bpy.ops, cls.bl_idname)
-        assert bpy_operator, f"ERROR: {cls.__name__}.start_background_queue(): Operator '{cls.bl_idname}' not found in bpy.ops."
-        bpy_operator(queue_identifier=queue_identifier)
-
-        return None
+        @classmethod
+        def define_background_queue(cls, queue_identifier:str, queue_data:dict):
+            """Add a queue to the class. Meant for public use.
+            or define class.queues[queue_identifier] - .. yourself"""
+        
+            tasks_count = 0
+            for k,v in queue_data.items():
+                if (type(k) is int):
+        
+                    #ensure these values exists
+                    assert 'task_modu_name' in v, f"ERROR: define_background_queue(): 'task_modu_name' is required in queue_data."
+                    assert 'task_pos_args' in v, f"ERROR: define_background_queue(): 'task_pos_args' is required in queue_data."
+                    assert 'task_kw_args' in v, f"ERROR: define_background_queue(): 'task_kw_args' is required in queue_data."
+                    assert 'task_fn_name' in v, f"ERROR: define_background_queue(): 'task_fn_name' is required in queue_data."
+        
+                    #ensure these two values are by default always set to None
+                    v['task_fn_worker'] = None
+                    v['task_result'] = None
+        
+                    tasks_count += 1
+                    continue
+        
+            if (tasks_count == 0):
+                raise ValueError(f"ERROR: {cls.__name__}.define_background_queue(): No tasks found in queue_data.")
+        
+            cls.queues[queue_identifier] = queue_data
+            return None
+        
+        @classmethod
+        def start_background_queue(cls, queue_identifier:str):
+            """Start a queue of background tasks. Will run bpy.ops. Meant for public use.
+            or run the according bpy.ops with the according queue identifier"""
+        
+            if (queue_identifier not in cls.queues):
+                raise ValueError(f"ERROR: {cls.__name__}.start_background_queue(): Queue identifier '{queue_identifier}' not found in queue dict. Make sure to use define_background_queue() classmethod function to define a queue first")
+        
+            bpy_operator = getattr(bpy.ops, cls.bl_idname)
+            assert bpy_operator, f"ERROR: {cls.__name__}.start_background_queue(): Operator '{cls.bl_idname}' not found in bpy.ops."
+            bpy_operator(queue_identifier=queue_identifier)
+        
+            return None
 
     @classmethod
     def is_running(cls, queue_identifier:str) -> bool:
@@ -613,7 +617,7 @@ class BackgroundQueueProcessingModalMixin:
         self._modal_timer = None #the modal timer item, important for tracking the currently running background task.
         self._pool_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
-        self._all_successfully_finished = False #flag to check if the queue was successfully finished.
+        self._allfinished = False #flag to check if the queue was successfully finished.
 
         self.qactive = None #the queue of tasks corresponding to the queue identifier, a dict of tasks of worker functions to be executed
         self.qidx = 0 #the current index of the task that is being executed
@@ -836,7 +840,7 @@ class BackgroundQueueProcessingModalMixin:
 
             # if we are at the end of the queue, we can finish the modal
             if (self.qidx >= self._tasks_count):
-                self.successful_finish(context)
+                self.successfinish(context)
                 self.cleanup(context)
                 return {'FINISHED'}
 
@@ -879,10 +883,10 @@ class BackgroundQueueProcessingModalMixin:
 
         return {'PASS_THROUGH'}
 
-    def successful_finish(self, context):
+    def successfinish(self, context):
         """finish the queue."""
 
-        self._all_successfully_finished = True
+        self._allfinished = True
 
         #debug print the result of each queue tasks?
         global IS_DEBUG
@@ -899,7 +903,7 @@ class BackgroundQueueProcessingModalMixin:
         cls = self.__class__
 
         #callback if something went wrong
-        if (not self._all_successfully_finished):
+        if (not self._successfully_finished):
               self.exec_callback(context, 'queue_callback_fatalerror')
         else: self.exec_callback(context, 'queue_callback_post')
 
@@ -982,47 +986,49 @@ class ParallelQueueProcessingModalMixin:
     taskpiles = {}
     running_taskpiles = []
 
-    @classmethod
-    def define_parallel_taskpile(cls, taskpile_identifier:str, taskpile_data:dict):
-        """Add a taskpile to the class. Meant for public use.
-        or define class.taskpiles[taskpile_identifier] - .. yourself"""
+    if False: # NOTE: Easy class utils functions? Currently unused.
 
-        tasks_count = 0
-        for k,v in taskpile_data.items():
-            if (type(k) is int):
-
-                #ensure these values exists
-                assert 'task_modu_name' in v, f"ERROR: define_parallel_taskpile(): 'task_modu_name' is required in taskpile_data."
-                assert 'task_pos_args' in v, f"ERROR: define_parallel_taskpile(): 'task_pos_args' is required in taskpile_data."
-                assert 'task_kw_args' in v, f"ERROR: define_parallel_taskpile(): 'task_kw_args' is required in taskpile_data."
-                assert 'task_fn_name' in v, f"ERROR: define_parallel_taskpile(): 'task_fn_name' is required in taskpile_data."
-
-                #ensure these two values are by default always set to None
-                v['task_fn_worker'] = None
-                v['task_result'] = None
-
-                tasks_count += 1
-                continue
-
-        if (tasks_count == 0):
-            raise ValueError(f"ERROR: {cls.__name__}.define_parallel_taskpile(): No tasks found in taskpile_data.")
-
-        cls.taskpiles[taskpile_identifier] = taskpile_data
-        return None
-
-    @classmethod
-    def start_parallel_taskpile(cls, taskpile_identifier:str):
-        """Start a taskpile of parallel tasks. Will run bpy.ops. Meant for public use.
-        or run the according bpy.ops with the according taskpile identifier"""
-
-        if (taskpile_identifier not in cls.taskpiles):
-            raise ValueError(f"ERROR: {cls.__name__}.start_parallel_taskpile(): Taskpile identifier {taskpile_identifier} not found in taskpiles dict. Make sure to use define_parallel_taskpile() classmethod function to define a taskpile first")
-
-        bpy_operator = getattr(bpy.ops, cls.bl_idname)
-        assert bpy_operator, f"ERROR: {cls.__name__}.start_parallel_taskpile(): Operator '{cls.bl_idname}' not found in bpy.ops."
-        bpy_operator(taskpile_identifier=taskpile_identifier)
-
-        return None
+        @classmethod
+        def define_parallel_taskpile(cls, taskpile_identifier:str, taskpile_data:dict):
+            """Add a taskpile to the class. Meant for public use.
+            or define class.taskpiles[taskpile_identifier] - .. yourself"""
+        
+            tasks_count = 0
+            for k,v in taskpile_data.items():
+                if (type(k) is int):
+        
+                    #ensure these values exists
+                    assert 'task_modu_name' in v, f"ERROR: define_parallel_taskpile(): 'task_modu_name' is required in taskpile_data."
+                    assert 'task_pos_args' in v, f"ERROR: define_parallel_taskpile(): 'task_pos_args' is required in taskpile_data."
+                    assert 'task_kw_args' in v, f"ERROR: define_parallel_taskpile(): 'task_kw_args' is required in taskpile_data."
+                    assert 'task_fn_name' in v, f"ERROR: define_parallel_taskpile(): 'task_fn_name' is required in taskpile_data."
+        
+                    #ensure these two values are by default always set to None
+                    v['task_fn_worker'] = None
+                    v['task_result'] = None
+        
+                    tasks_count += 1
+                    continue
+        
+            if (tasks_count == 0):
+                raise ValueError(f"ERROR: {cls.__name__}.define_parallel_taskpile(): No tasks found in taskpile_data.")
+        
+            cls.taskpiles[taskpile_identifier] = taskpile_data
+            return None
+        
+        @classmethod
+        def start_parallel_taskpile(cls, taskpile_identifier:str):
+            """Start a taskpile of parallel tasks. Will run bpy.ops. Meant for public use.
+            or run the according bpy.ops with the according taskpile identifier"""
+        
+            if (taskpile_identifier not in cls.taskpiles):
+                raise ValueError(f"ERROR: {cls.__name__}.start_parallel_taskpile(): Taskpile identifier {taskpile_identifier} not found in taskpiles dict. Make sure to use define_parallel_taskpile() classmethod function to define a taskpile first")
+        
+            bpy_operator = getattr(bpy.ops, cls.bl_idname)
+            assert bpy_operator, f"ERROR: {cls.__name__}.start_parallel_taskpile(): Operator '{cls.bl_idname}' not found in bpy.ops."
+            bpy_operator(taskpile_identifier=taskpile_identifier)
+        
+            return None
 
     @classmethod
     def is_running(cls, taskpile_identifier:str) -> bool:
@@ -1044,7 +1050,7 @@ class ParallelQueueProcessingModalMixin:
         self._available_tasks = [] #list of task indices ready to start (dependencies met)
         self._dependency_graph = {} #mapping of task dependencies: {task_idx: [depends_on_task_idx, ...]}
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
-        self._all_successfully_finished = False #flag to check if the queue was successfully finished.
+        self._allfinished = False #flag to check if the queue was successfully finished.
 
         self.pileactive = None #the queue of tasks corresponding to the taskpile_identifier, a dict of tasks of worker functions to be executed
         
@@ -1390,16 +1396,16 @@ class ParallelQueueProcessingModalMixin:
 
         # Check if all tasks are completed
         if (len(self._completed_tasks) >= self._tasks_count):
-            self.successful_finish(context)
+            self.successfinish(context)
             self.cleanup(context)
             return {'FINISHED'}
 
         return {'PASS_THROUGH'}
 
-    def successful_finish(self, context):
+    def successfinish(self, context):
         """finish the taskpile."""
 
-        self._all_successfully_finished = True
+        self._allfinished = True
 
         #debug print the result of each taskpile tasks?
         global IS_DEBUG
@@ -1416,7 +1422,7 @@ class ParallelQueueProcessingModalMixin:
         cls = self.__class__
 
         #callback if something went wrong
-        if (not self._all_successfully_finished):
+        if (not self._successfully_finished):
               self.exec_callback(context, 'taskspile_callback_fatalerror')
         else: self.exec_callback(context, 'taskspile_callback_post')
 
