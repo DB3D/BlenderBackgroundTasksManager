@@ -9,8 +9,7 @@ bl_info = {
 }
 
 #TODO
-# - Cancellation system, leave flag in cls, and check in modal. implement '_callback_cancel'
-# - make sure cancellation system and is_running system works well with multi identifiers ops (test with backqueue)
+# - make sure cancellation system and is_running system works well with multi identifiers ops (test with another backqueue)
 # - make sure parralle example work with random integer number, not just enumeration, and change examples!!!
 
 import bpy
