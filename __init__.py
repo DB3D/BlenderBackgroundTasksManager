@@ -192,7 +192,7 @@ class BlockingQueueProcessingModalMixin:
         return {'RUNNING_MODAL'}
 
     def exec_callback(self, context, callback_identifier=None,):
-        """call the callback function for the current task."""
+        """call the callback function for the current task or queue"""
 
         if (callback_identifier not in {'task_callback_post','task_callback_pre','queue_callback_cancel','queue_callback_fatalerror','queue_callback_pre','queue_callback_post',}):
             print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}")
@@ -688,7 +688,7 @@ class BackgroundQueueProcessingModalMixin:
             return {'FINISHED'}
 
     def exec_callback(self, context, callback_identifier=None,):
-        """call the callback function for the current task."""
+        """call the callback function for the current task or queue"""
 
         if (callback_identifier not in {'task_callback_post','task_callback_pre','queue_callback_cancel','queue_callback_fatalerror','queue_callback_pre','queue_callback_post',}):
             print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}")
@@ -908,7 +908,7 @@ class BackgroundQueueProcessingModalMixin:
 class ParallelQueueProcessingModalMixin:
     """Schedule a series of background tasks stored run in parallel.
     All tasks will be executed in the background in  parallel (if their results are not co dependent).
-    Use the taskpile_identifier to specify which queue to use. and define the class.queues map before calling the operator.
+    Use the queue_identifier to specify which queue to use. and define the class.queues map before calling the operator.
     Note that if an error occurs, the whole queue will be cancelled.
 
     This class is meant to be a mixin subclassed, not to be used directly.
@@ -918,24 +918,24 @@ class ParallelQueueProcessingModalMixin:
     bl_label = "ChildrenDefined"
     bl_description = "ChildrenDefined"
 
-    taskpile_identifier : bpy.props.StringProperty(
+    queue_identifier : bpy.props.StringProperty(
         default="",
         description="Identifier for the process, in order to retrieve queue instruction for this process in cls.queues",
         options={'SKIP_SAVE'},
         )
     send_cancel_request : bpy.props.BoolProperty(
         default=False,
-        description="Cancel the modal potentially running at the given 'taskpile_identifier'",
+        description="Cancel the modal potentially running at the given 'queue_identifier'",
         options={'SKIP_SAVE'},
         )
 
-    # NOTE: about the taskpiles parameter:
+    # NOTE: about the queues parameter:
     ################### Usage: #############################
-    #   change cls.taskpiles dict before calling the operation to add your own tasks!
-    #   make sure to set self.taskpile_identifier and that this value is present in the taskpiles dict.
-    #   the taskpile is a unordered pile of tasks, the order of the tasks is not important, the dependencies will be resolved automatically.
+    #   change cls.queues dict before calling the operation to add your own tasks!
+    #   make sure to set self.queue_identifier and that this value is present in the queues dict.
+    #   the queue, in this context, is a unordered pile of tasks, the order of the tasks is not important, the dependencies will be resolved automatically.
     ################### Expected format: ###################
-    #  <taskpile_identifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.taskpile_identifier
+    #  <queue_identifier>: {    NOTE: perhaps you wish to run this operator simultaneously with multiple processes? that is why we need to identigy your queue, will equal to the passed self.queue_identifier
     #     <taskintegerid>: {       NOTE: The task index, int starting at 0.
     #         'task_modu_name': <myscript.py>,                 NOTE: The script name where your function is located. This module shall be totally independent from blender and make no use of bpy!
     #         'task_pos_args': [<args_value>],                 NOTE: Arguments to pass to the function. These values must be pickeable (bpy independant)!
@@ -947,26 +947,26 @@ class ParallelQueueProcessingModalMixin:
     #         'task_callback_pre': <function>,                 NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
     #         'task_callback_post': <function>,                      callbacks will never execute in background, it will be called in the main thread. 
     #     },                                                         therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
-    #      NOTE: More optional callbacks! signature: (self, context) & return None. 'taskspile_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
-    #     'taskspile_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.taskpiles[self.taskpile_identifier][task_idx][..]) if needed.
-    #     'taskspile_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
-    #     'taskspile_callback_cancel': <function>,      NOTE: This callback is to be used to handle manual user cancellation.
-    #     'taskspile_callback_fatalerror': <function>,  NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'taskspile_callback_post' will not be called)
+    #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
+    #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][task_idx][..]) if needed.
+    #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
+    #     'queue_callback_cancel': <function>,      NOTE: This callback is to be used to handle manual user cancellation.
+    #     'queue_callback_fatalerror': <function>,  NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
     #  },
 
-    taskpiles = {}
-    runningidentifiers = [] #list of <taskpiles> currently being ran.
-    cancelrequests = [] #list of <taskpiles> being asked to be cancelled.
+    queues = {}
+    runningidentifiers = [] #list of <queues> currently being ran.
+    cancelrequests = [] #list of <queues> being asked to be cancelled.
 
     @classmethod
-    def is_running(cls, taskpile_identifier:str) -> bool:
+    def is_running(cls, queue_identifier:str) -> bool:
         """check if a queue is currently running"""
         if (not is_modal_active(cls)):
             return False
-        if (taskpile_identifier not in cls.taskpiles):
-            debugprint(f"WARNING:' {taskpile_identifier}' not found in {cls.__name__}.taskpiles")
+        if (queue_identifier not in cls.queues):
+            debugprint(f"WARNING:' {queue_identifier}' not found in {cls.__name__}.queues")
             return False
-        return (taskpile_identifier in cls.runningidentifiers)
+        return (queue_identifier in cls.runningidentifiers)
 
     def initialize_variables(self):
         """Initialize the operator state variables"""
@@ -980,27 +980,27 @@ class ParallelQueueProcessingModalMixin:
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
         self._allfinished = False #flag to check if the queue was successfully finished.
 
-        self.pileactive = None #the queue of tasks corresponding to the taskpile_identifier, a dict of tasks of worker functions to be executed
+        self.qactive = None #the queue of tasks corresponding to the queue_identifier, a dict of tasks of worker functions to be executed
         
         return None
 
     def collect_tasks(self, context) -> bool:
-        """collect all independent functions to be executed and place them back into the taskpile. 
+        """collect all independent functions to be executed and place them back into the queue. 
         return True if all worker functions were found, False if there was an error otherwise."""
 
         all_tasks_count = 0
         valid_tasks_count = 0
 
-        for k,v in self.pileactive.items():
+        for k,v in self.qactive.items():
             if (type(k) is int):
                 all_tasks_count += 1
                 function_worker = multiproc_get_worker_fct(v['task_modu_name'], v['task_fn_name'])
                 if (function_worker):
-                    self.pileactive[k]['task_fn_worker'] = function_worker
+                    self.qactive[k]['task_fn_worker'] = function_worker
                     valid_tasks_count += 1
 
         if (all_tasks_count != valid_tasks_count):
-            print(f"ERROR: {self._debugname}.collect_tasks(): Something went wrong. We couldn't import all the worker functions for your taskpile.")
+            print(f"ERROR: {self._debugname}.collect_tasks(): Something went wrong. We couldn't import all the worker functions for your queue.")
             return False
 
         self._tasks_count = valid_tasks_count
@@ -1012,7 +1012,7 @@ class ParallelQueueProcessingModalMixin:
         self._dependency_graph = {}
         
         # First pass: find all dependencies
-        for task_idx, task_data in self.pileactive.items():
+        for task_idx, task_data in self.qactive.items():
             if (type(task_idx) is not int):
                 continue
                 
@@ -1057,13 +1057,13 @@ class ParallelQueueProcessingModalMixin:
             
             task_idx = int(parts[1])
             result_idx = int(parts[2])
-            if (task_idx not in self.pileactive):
-                raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Task index {task_idx} not found in taskpile: {self.pileactive}")
-            result = self.pileactive[task_idx]['task_result']
+            if (task_idx not in self.qactive):
+                raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Task index {task_idx} not found in queue: {self.qactive}")
+            result = self.qactive[task_idx]['task_result']
             if (result is None):
                 raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Task{task_idx} results are None! Perhaps it's not ready yet, or perhaps this task return None.")
             try:
-                value = self.pileactive[task_idx]['task_result'][result_idx]
+                value = self.qactive[task_idx]['task_result'][result_idx]
             except Exception as e:
                 raise ValueError(f"ERROR: {self._debugname}.resolve_notation(): Invalid result index: {result_idx} for task {task_idx}: {e}")
             return value
@@ -1089,33 +1089,33 @@ class ParallelQueueProcessingModalMixin:
                 raise ValueError(f"ERROR: {self._debugname}.resolve_params_notation(): Invalid argument type: {type(paramargs)} for task resolution")
 
     def execute(self, context):
-        """initiate the taskpile on execution, the modal will actually handle the task execution.."""
+        """initiate the queue on execution, the modal will actually handle the task execution.."""
         cls = self.__class__
 
         # Are we simply sending a cancel request signal to the class??
         if (self.send_cancel_request==True):
-            if (self.taskpile_identifier in cls.runningidentifiers) and (self.taskpile_identifier not in cls.cancelrequests):
-                cls.cancelrequests.append(self.taskpile_identifier)
+            if (self.queue_identifier in cls.runningidentifiers) and (self.queue_identifier not in cls.cancelrequests):
+                cls.cancelrequests.append(self.queue_identifier)
             return {'FINISHED'}
 
         # Check if we are able to run another instance of this class..
-        if cls.is_running(self.taskpile_identifier):
-            print(f"WARNING: modal operator '{self.__name__}' of identifier '{self.taskpile_identifier}' is already running!")
+        if cls.is_running(self.queue_identifier):
+            print(f"WARNING: modal operator '{self.__name__}' of identifier '{self.queue_identifier}' is already running!")
             return None
-        cls.runningidentifiers.append(self.taskpile_identifier) # define a new running identifier. In order to is_running() to work properly..
+        cls.runningidentifiers.append(self.queue_identifier) # define a new running identifier. In order to is_running() to work properly..
 
         # Initialize state variables
         self.initialize_variables()
 
-        #make sure the taskpile identifier is set..
-        if (self.taskpile_identifier not in self.taskpiles):
-            print(f"ERROR: {self._debugname}.execute(): Taskpile identifier {self.taskpile_identifier} not found in taskpiles dict.")
+        #make sure the queue identifier is set..
+        if (self.queue_identifier not in self.queues):
+            print(f"ERROR: {self._debugname}.execute(): Queue identifier {self.queue_identifier} not found in queues dict.")
             self.cleanup(context)
             return {'FINISHED'}
-        self.pileactive = self.taskpiles[self.taskpile_identifier]
+        self.qactive = self.queues[self.queue_identifier]
 
-        #call the taskspile_callback_pre function, if exists
-        self.exec_callback(context, 'taskspile_callback_pre')
+        #call the queue_callback_pre function, if exists
+        self.exec_callback(context, 'queue_callback_pre')
 
         debugprint(f"INFO: {self._debugname}.execute(): Starting parallel multiprocessing..")
         try:            
@@ -1142,22 +1142,22 @@ class ParallelQueueProcessingModalMixin:
             return {'FINISHED'}
 
     def exec_callback(self, context, callback_identifier=None, task_idx=None):
-        """call the callback function for the current task or taskpile."""
+        """call the callback function for the current task or queue"""
 
-        if (callback_identifier not in {'task_callback_post','task_callback_pre','taskspile_callback_cancel','taskspile_callback_fatalerror','taskspile_callback_pre','taskspile_callback_post',}):
+        if (callback_identifier not in {'task_callback_post','task_callback_pre','queue_callback_cancel','queue_callback_fatalerror','queue_callback_pre','queue_callback_post',}):
             print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}")
             return None
 
-        #get the callback function, either stored on task or taskspile level
+        #get the callback function, either stored on task or queue level
         if callback_identifier.startswith('task_'):
             if (task_idx is None):
                 print(f"ERROR: {self._debugname}.exec_callback(): task_idx is required for task callbacks")
                 return None
-            callback = self.pileactive[task_idx].get(callback_identifier, None)
-        elif callback_identifier.startswith('taskspile_'):
-            callback = self.pileactive.get(callback_identifier, None)
+            callback = self.qactive[task_idx].get(callback_identifier, None)
+        elif callback_identifier.startswith('queue_'):
+            callback = self.qactive.get(callback_identifier, None)
         else:
-            print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}. Should always start with 'task_' or 'taskspile_'")
+            print(f"ERROR: {self._debugname}.exec_callback(): Invalid callback identifier: {callback_identifier}. Should always start with 'task_' or 'queue_'")
             return None
 
         if (callback is None):
@@ -1168,12 +1168,12 @@ class ParallelQueueProcessingModalMixin:
     
         #define callback arguments
         args = (self, context,)
-        #the 'task_callback_post', 'taskspile_callback_post' recieve the results as arguments
+        #the 'task_callback_post', 'queue_callback_post' recieve the results as arguments
         match callback_identifier:
             case 'task_callback_post':
-                args += (self.pileactive[task_idx]['task_result'],)
-            case 'taskspile_callback_post':
-                result_dict = {k:v['task_result'] for k,v in self.pileactive.items() if (type(k) is int)}
+                args += (self.qactive[task_idx]['task_result'],)
+            case 'queue_callback_post':
+                result_dict = {k:v['task_result'] for k,v in self.qactive.items() if (type(k) is int)}
                 args += (result_dict,)
         try:
             if task_idx is not None:
@@ -1198,14 +1198,14 @@ class ParallelQueueProcessingModalMixin:
             self.exec_callback(context, 'task_callback_pre', task_idx)
 
             # get the function..
-            taskfunc = self.pileactive[task_idx]['task_fn_worker']
+            taskfunc = self.qactive[task_idx]['task_fn_worker']
             if (taskfunc is None):
                 print(f"ERROR: {self._debugname}.start_parallel_task(): Function worker task{task_idx} was not found!")
                 return False
 
             # get the arguments we need to pass to the function
-            args = self.pileactive[task_idx]['task_pos_args']
-            kwargs = self.pileactive[task_idx]['task_kw_args']
+            args = self.qactive[task_idx]['task_pos_args']
+            kwargs = self.qactive[task_idx]['task_kw_args']
 
             # Resolve any result references in args and kwargs
             resolved_args = self.resolve_params_notation(args) if args else []
@@ -1259,7 +1259,7 @@ class ParallelQueueProcessingModalMixin:
                 if (not isinstance(result, tuple)):
                     result = (result,)
                 
-                self.pileactive[task_idx]['task_result'] = result
+                self.qactive[task_idx]['task_result'] = result
                 debugprint(f"INFO: {self._debugname}.check_completed_tasks(): Task{task_idx} finished! Results: {result}")
                 
                 # call the 'task_callback_post' function, if exists
@@ -1313,7 +1313,7 @@ class ParallelQueueProcessingModalMixin:
         cls = self.__class__
 
         # Check there is a cancel request
-        is_cancel_request = self.taskpile_identifier in cls.cancelrequests
+        is_cancel_request = self.queue_identifier in cls.cancelrequests
         if (is_cancel_request):
             self.cleanup(context)
             return {'FINISHED'}
@@ -1343,15 +1343,15 @@ class ParallelQueueProcessingModalMixin:
         return {'PASS_THROUGH'}
 
     def successfinish(self, context):
-        """finish the taskpile."""
+        """finish the queue."""
 
         self._allfinished = True
 
-        #debug print the result of each taskpile tasks?
+        #debug print the result of each queue tasks?
         global IS_DEBUG
         if (IS_DEBUG):
             print(f"INFO: {self._debugname}.finish(): All tasks finished! Results:")
-            for k,v in self.pileactive.items():
+            for k,v in self.qactive.items():
                 if (type(k) is int):
                     print(f"     Task{k}: {v['task_result']}")
 
@@ -1361,15 +1361,15 @@ class ParallelQueueProcessingModalMixin:
         """clean up our operator after use."""
         cls = self.__class__
 
-        is_cancel_request = self.taskpile_identifier in cls.cancelrequests
+        is_cancel_request = self.queue_identifier in cls.cancelrequests
 
         # finishing callbacks
         if (is_cancel_request):
-            self.exec_callback(context, 'taskspile_callback_cancel')
+            self.exec_callback(context, 'queue_callback_cancel')
         elif (not self._allfinished):
-            self.exec_callback(context, 'taskspile_callback_fatalerror')
+            self.exec_callback(context, 'queue_callback_fatalerror')
         else:
-            self.exec_callback(context, 'taskspile_callback_post')
+            self.exec_callback(context, 'queue_callback_post')
 
         #remove timer
         if (self._modal_timer):
@@ -1378,7 +1378,7 @@ class ParallelQueueProcessingModalMixin:
 
         #remove cancel request
         if (is_cancel_request):
-            cls.cancelrequests.remove(self.taskpile_identifier)
+            cls.cancelrequests.remove(self.queue_identifier)
 
         #clear running tasks
         self._running_tasks.clear()
@@ -1390,8 +1390,8 @@ class ParallelQueueProcessingModalMixin:
         self._tasks_count = 0
     
         # the queue is no longer running
-        if (self.taskpile_identifier in cls.runningidentifiers):
-            cls.runningidentifiers.remove(self.taskpile_identifier)
+        if (self.queue_identifier in cls.runningidentifiers):
+            cls.runningidentifiers.remove(self.queue_identifier)
 
         debugprint(f"INFO: {self._debugname}.cleanup(): clean up done")
         return None
@@ -1529,7 +1529,7 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
     bl_label = "Launch Parallel Tasks"
     bl_description = "Launch Parallel Tasks with complex dependency tree"
 
-    taskpiles = {
+    queues = {
         "my_complex_parallel_tasks" : {
             # Wave 0: 5 independent solo tasks (run in parallel)
             0: {
@@ -1616,12 +1616,12 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
                 'task_callback_pre': lambda self, context: update_parallel_task_status(7, "running"),
                 'task_callback_post': lambda self, context, result: update_parallel_task_status(7, "completed"),
             },
-            
-            # Taskpile callbacks
-            'taskspile_callback_pre': lambda self, context: init_parallel_task_tracking(),
-            'taskspile_callback_post': lambda self, context, results: finalize_parallel_tasks(results),
-            'taskspile_callback_cancel': lambda self, context: finalize_parallel_tasks('Cancelled'),
-            'taskspile_callback_fatalerror': lambda self, context: update_message('ex3', "Error Occurred..."),
+
+            #define queue callbacks
+            'queue_callback_pre': lambda self, context: init_parallel_task_tracking(),
+            'queue_callback_post': lambda self, context, results: finalize_parallel_tasks(results),
+            'queue_callback_cancel': lambda self, context: finalize_parallel_tasks('Cancelled'),
+            'queue_callback_fatalerror': lambda self, context: update_message('ex3', "Error Occurred..."),
         }
     }
 
@@ -1765,11 +1765,11 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
         butrun = rwoo.row(align=True)
         butrun.enabled = not currently_running
         op = butrun.operator(cls.bl_idname, text="Launch Parallel Tasks!", icon='PLAY')
-        op.taskpile_identifier = identifier
+        op.queue_identifier = identifier
         if (currently_running):
             butcanc = rwoo.row(align=True)
             op = butcanc.operator(cls.bl_idname, text="", icon='PANEL_CLOSE')
-            op.taskpile_identifier = identifier ; op.send_cancel_request = True
+            op.queue_identifier = identifier ; op.send_cancel_request = True
 
         box.separator(type='LINE')
 
