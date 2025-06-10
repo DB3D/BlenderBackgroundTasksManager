@@ -9,7 +9,6 @@ bl_info = {
 }
 
 #TODO
-# - make sure cancellation system and is_running system works well with multi identifiers ops (test with another backqueue)
 # - make sure parralle example work with random integer number, not just enumeration, and change examples!!!
 
 import bpy
@@ -1493,7 +1492,7 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
             },
             1: {
                 'task_modu_name': "my_standalone_worker.py",
-                'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, index 0
+                'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, result[0]
                 'task_kw_args': {"printhis": "Hello There!"},
                 'task_fn_name': "mytask",
                 'task_fn_worker': None,
@@ -1503,7 +1502,7 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
             },
             2: {
                 'task_modu_name': "another_test.py",
-                'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, index 0
+                'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, result[0]
                 'task_kw_args': {},
                 'task_fn_name': "myfoo",
                 'task_fn_worker': None,
@@ -1512,11 +1511,49 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
                 'task_callback_post': lambda self, context, result: update_message('ex2',"Done!"),
             },
             #define queue callbacks
-            'queue_callback_pre': lambda self, context: print("Callback: Before queue"),
+            'queue_callback_pre': lambda self, context: update_message('ex2',"Start Q!"),
             'queue_callback_post': lambda self, context, results: update_message('ex2',"All Done!"),
             'queue_callback_cancel': lambda self, context: update_message('ex2',"Cancelled"),
             'queue_callback_fatalerror': lambda self, context: update_message('ex2',"Error Occured..."),
-        }
+        },
+        "another_background_tasks" : {
+            #define queue tasks
+            0: {
+                'task_modu_name': "my_standalone_worker.py",
+                'task_pos_args': [2,],
+                'task_kw_args': {},
+                'task_fn_name': "mytask",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: update_message('ex22',"Starting2.."),
+                'task_callback_post': lambda self, context, result: update_message('ex22',"Very Nice2!"),
+            },
+            1: {
+                'task_modu_name': "my_standalone_worker.py",
+                'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, result[0]
+                'task_kw_args': {"printhis": "Hello There!"},
+                'task_fn_name': "mytask",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: update_message('ex22',"King of2?"),
+                'task_callback_post': lambda self, context, result: update_message('ex22',"King of the Castle2!"),
+            },
+            2: {
+                'task_modu_name': "another_test.py",
+                'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, result[0]
+                'task_kw_args': {},
+                'task_fn_name': "myfoo",
+                'task_fn_worker': None,
+                'task_result': None,
+                'task_callback_pre': lambda self, context: update_message('ex22',"Almost there2.."),
+                'task_callback_post': lambda self, context, result: update_message('ex22',"Done2!"),
+            },
+            #define queue callbacks
+            'queue_callback_pre': lambda self, context: update_message('ex22',"Start Q2!"),
+            'queue_callback_post': lambda self, context, results: update_message('ex22',"All Done2!"),
+            'queue_callback_cancel': lambda self, context: update_message('ex22',"Cancelled2"),
+            'queue_callback_fatalerror': lambda self, context: update_message('ex22',"Error Occured2..."),
+        },
     }
 
 ###############################
@@ -1636,6 +1673,7 @@ def tag_redraw_all():
 MYMESSAGES = {
     'ex1': "Blocking Queue Infos..",
     'ex2': "Background Queue Infos..",
+    'ex22': "Background Queue Infos2..",
     'ex3': "Parallel Tasks Infos..",
     }
 def update_message(identifier, newmessage,):
@@ -1733,9 +1771,10 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
         #Example 2: Non blocking background queue, no access to bpy..
         
         cls = MULTIPROCESS_OT_mybackgroundqueue
+
         identifier = "my_background_tasks"
         currently_running = cls.is_running(identifier)
-
+        #
         box = layout.box()
         rwoo = box.row(align=True)
         rwoo.scale_y = 1.3
@@ -1750,7 +1789,25 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
         #
         box.separator(type='LINE')
         box.label(text=MYMESSAGES['ex2'])
-        
+
+        identifier = "another_background_tasks"
+        currently_running = cls.is_running(identifier)
+        #
+        box = layout.box()
+        rwoo = box.row(align=True)
+        rwoo.scale_y = 1.3
+        butrun = rwoo.row(align=True)
+        butrun.enabled = not currently_running
+        op = butrun.operator(cls.bl_idname, text="Launch Another Queue!", icon='PLAY')
+        op.queue_identifier = identifier
+        if (currently_running):
+            butcanc = rwoo.row(align=True)
+            op = butcanc.operator(cls.bl_idname, text="", icon='PANEL_CLOSE')
+            op.queue_identifier = identifier ; op.send_cancel_request = True
+        #
+        box.separator(type='LINE')
+        box.label(text=MYMESSAGES['ex22'])
+
         ###########################################
         #Example 3: Parallel tasks with wave visualization
         
