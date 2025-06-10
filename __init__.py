@@ -8,9 +8,6 @@ bl_info = {
     "category": "Development",
 }
 
-#TODO
-# - make sure parralle example work with random integer number, not just enumeration, and change examples!!!
-
 import bpy
 
 import os
@@ -1567,90 +1564,90 @@ class MULTIPROCESS_OT_myparalleltasks(ParallelQueueProcessingModalMixin, bpy.typ
 
     queues = {
         "my_complex_parallel_tasks" : {
-            # Wave 0: 5 independent solo tasks (run in parallel)
-            0: {
+            # First wave, independent tasks
+            100000541: {
                 'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [1, "DataA"],
                 'task_kw_args': {"delay": 2.0},
                 'task_fn_name': "process_data",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(0, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(0, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(100000541, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(100000541, "completed"),
             },
-            1: {
+            11111110: {
                 'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [2, "DataB"],
                 'task_kw_args': {"delay": 1.5},
                 'task_fn_name': "process_data",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(1, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(1, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(11111110, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(11111110, "completed"),
             },
-            2: {
+            22234: {
                 'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [3, "DataC"],
                 'task_kw_args': {"delay": 2.5},
                 'task_fn_name': "process_data",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(2, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(2, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(22234, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(22234, "completed"),
             },
-            3: {
+            3333345: {
                 'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [4, "DataD"],
                 'task_kw_args': {"delay": 1.0},
                 'task_fn_name': "process_data",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(3, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(3, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(3333345, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(3333345, "completed"),
             },
-            4: {
+            44445651: {
                 'task_modu_name':  "my_parallel_worker.py",
                 'task_pos_args': [5, "DataE"],
                 'task_kw_args': {"delay": 1.8},
                 'task_fn_name': "process_data",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(4, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(4, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(44445651, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(44445651, "completed"),
             },
             
-            # Wave 1: 2 tasks that depend on solo tasks (queue level 1)
-            5: {
+            # Second wave, depend on independent tasks
+            55555551: {
                 'task_modu_name':  "my_parallel_worker.py",
-                'task_pos_args': ['USE_TASK_RESULT|0|0', 'USE_TASK_RESULT|1|0'],  # Depends on tasks 0 and 1
+                'task_pos_args': ['USE_TASK_RESULT|100000541|0', 'USE_TASK_RESULT|11111110|0'],
                 'task_kw_args': {"operation": "combine"},
                 'task_fn_name': "combine_results",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(5, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(5, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(55555551, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(55555551, "completed"),
             },
-            6: {
+            66766 : {
                 'task_modu_name':  "my_parallel_worker.py",
-                'task_pos_args': ['USE_TASK_RESULT|2|0', 'USE_TASK_RESULT|3|0', 'USE_TASK_RESULT|4|0'],  # Depends on tasks 2, 3, 4
+                'task_pos_args': ['USE_TASK_RESULT|22234|0', 'USE_TASK_RESULT|3333345|0', 'USE_TASK_RESULT|44445651|0'],
                 'task_kw_args': {"operation": "merge"},
                 'task_fn_name': "combine_results",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(6, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(6, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(66766, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(66766, "completed"),
             },
             
-            # Wave 2: 2 final tasks that depend on the queue results (queue level 2)
-            7: {
+            # Third wave, depend on second wave
+            777895: {
                 'task_modu_name':  "my_parallel_worker.py",
-                'task_pos_args': ['USE_TASK_RESULT|5|0', 'USE_TASK_RESULT|6|0'],  # Depends on task 5,6 results
+                'task_pos_args': ['USE_TASK_RESULT|55555551|0', 'USE_TASK_RESULT|66766|0'],
                 'task_kw_args': {},
                 'task_fn_name': "analyze_data",
                 'task_fn_worker': None,
                 'task_result': None,
-                'task_callback_pre': lambda self, context: update_parallel_task_status(7, "running"),
-                'task_callback_post': lambda self, context, result: update_parallel_task_status(7, "completed"),
+                'task_callback_pre': lambda self, context: update_parallel_task_status(777895, "running"),
+                'task_callback_post': lambda self, context, result: update_parallel_task_status(777895, "completed"),
             },
 
             #define queue callbacks
@@ -1723,7 +1720,6 @@ def update_parallel_task_status(task_idx, status):
 def finalize_parallel_tasks(results):
     """Called when all parallel tasks are finished"""
     if results=='Cancelled':
-        print("hey dowg")
         update_message('ex3', f"Cancelled..")    
         tag_redraw_all()
         return None    
@@ -1832,29 +1828,29 @@ class MULTIPROCESS_PT_panel(bpy.types.Panel):
         # Task wave visualization
         if (PARALLEL_TASK_STATUS):
             wave_box = box.box()
-            wave_box.label(text="Task Execution Waves:", icon='NETWORK_DRIVE')
+            wave_box.label(text="Tasks Execution Waves:", icon='NETWORK_DRIVE')
             split = wave_box.split(factor=0.33)
             # Wave 0 column
             col0 = split.column()
-            for task_idx in [0, 1, 2, 3, 4]:
+            for task_idx in [100000541, 11111110, 22234, 3333345, 44445651]:
                 status = PARALLEL_TASK_STATUS.get(task_idx, "pending")
                 icon = {'pending': 'PAUSE', 'running': 'PLAY', 'completed': 'CHECKMARK', 'error': 'ERROR'}[status]
                 row = col0.row()
-                row.label(text=f"Task{task_idx}: {status.title()}", icon=icon)
+                row.label(text=f"{task_idx}", icon=icon)
             # Wave 1 column
             col1 = split.column()
-            for task_idx in [5, 6]:
+            for task_idx in [55555551, 66766]:
                 status = PARALLEL_TASK_STATUS.get(task_idx, "pending")
                 icon = {'pending': 'PAUSE', 'running': 'PLAY', 'completed': 'CHECKMARK', 'error': 'ERROR'}[status]
                 row = col1.row()
-                row.label(text=f"Task{task_idx}: {status.title()}", icon=icon)
+                row.label(text=f"{task_idx}", icon=icon)
             # Wave 2 column  
             col2 = split.column()
-            for task_idx in [7,]:
+            for task_idx in [777895]:
                 status = PARALLEL_TASK_STATUS.get(task_idx, "pending")
                 icon = {'pending': 'PAUSE', 'running': 'PLAY', 'completed': 'CHECKMARK', 'error': 'ERROR'}[status]
                 row = col2.row()
-                row.label(text=f"Task{task_idx}: {status.title()}", icon=icon)
+                row.label(text=f"{task_idx}", icon=icon)
         
             box.separator(type='LINE')
 
