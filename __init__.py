@@ -87,38 +87,37 @@ def resolve_params_notation(self, parameters:tuple|list|dict,) -> tuple|list|dic
             raise ValueError(f"ERROR: resolve_params_notation({self._debugname}): Invalid argument type: {type(parameters)} for task {self.q_task_idx if hasattr(self,'q_task_idx') else 'unknown'}")
 
 def call_callback(self, context, callback_identifier:str=None, task_id:int=None) -> None:
-    """call the callback function for the active task/queue based on the given identifiers"""
+    """call the callback function of the class active queue/queue based on the given identifiers"""
 
     assert hasattr(self, 'q_active'), f"ERROR: resolve_params_notation(): 'q_active' not found in self. (self={self})"
     assert hasattr(self, '_debugname'), f"ERROR: resolve_params_notation(): 'q_task_idx' not found in self. (self={self})"
 
+    # make sure the callbacks are valid..
     if (callback_identifier not in {
             'task_callback_post',
             'task_callback_pre',
+            'queue_callback_pre',
+            'queue_callback_modal',
+            'queue_callback_post',
             'queue_callback_cancel',
             'queue_callback_fatalerror',
-            'queue_callback_pre',
-            'queue_callback_post',}
+            }
         ):
         print(f"ERROR: {self._debugname}.call_callback(): Invalid callback identifier: {callback_identifier}")
         return None
+    is_queue_callback, is_task_callback = callback_identifier.startswith('queue_'), callback_identifier.startswith('task_')
+    if (not (is_queue_callback or is_task_callback)):
+        print(f"ERROR: {self._debugname}.call_callback(): Invalid callback identifier: {callback_identifier}. Should always start with 'queue_' or 'task_'")
+        return None
+    if (is_task_callback and (task_id is None)):
+        print(f"ERROR: {self._debugname}.call_callback(): keyword arg 'task_id' is mandatory for task callbacks.")
+        return None
 
-    #get the callback function, either stored on task or queue level
-    match callback_identifier:
-
-        case _ if callback_identifier.startswith('task_'):
-            if (task_id is None):
-                print(f"ERROR: {self._debugname}.call_callback(): keyword arg 'task_id' is mandatory for task callbacks.")
-                return None
-            callback = self.q_active[task_id].get(callback_identifier, None)
-
-        case _ if callback_identifier.startswith('queue_'):
-            callback = self.q_active.get(callback_identifier, None)
-
-        case _:
-            print(f"ERROR: {self._debugname}.call_callback(): Invalid callback identifier: {callback_identifier}. Should always start with 'task_' or 'queue_'")
-            return None
-
+    # get the callback function queue level or callback task level.
+    if (is_queue_callback):
+        callback = self.q_active.get(callback_identifier, None)
+    if (is_task_callback):
+        callback = self.q_active[task_id].get(callback_identifier, None)
     # was the callback found?
     if (callback is None):
         return None
@@ -139,14 +138,14 @@ def call_callback(self, context, callback_identifier:str=None, task_id:int=None)
 
     # call the callback
     try:
-        if (task_id is not None):
-              debugprint(f"INFO: {self._debugname}.call_callback(): Calling Task{task_id} '{callback_identifier}'")
-        else: debugprint(f"INFO: {self._debugname}.call_callback(): Calling '{callback_identifier}'")
+        if (is_task_callback):
+              debugprint(f"INFO: {self._debugname}.call_callback(): Calling Task{task_id} callback '{callback_identifier}'")
+        else: debugprint(f"INFO: {self._debugname}.call_callback(): Calling queue callback '{callback_identifier}'")
         callback(*args)
 
     # error during call?
     except Exception as e:
-        if (task_id is not None):
+        if (is_task_callback):
               print(f"ERROR: {self._debugname}.call_callback(): Error calling Task{task_id} callback '{callback_identifier}'. Error message:\n{e}")
         else: print(f"ERROR: {self._debugname}.call_callback(): Error calling queue callback '{callback_identifier}'. Error message:\n{e}")
 
@@ -202,6 +201,7 @@ class BlockingQueueProcessingModalMixin:
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][taskindex][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
+    #     'queue_callback_modal': <function>,       NOTE: This callback is called every modal timer event.
     #     'queue_callback_cancel': <function>,      NOTE: This callback is to be used to handle manual user cancellation.
     #     'queue_callback_fatalerror': <function>,  NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
     #  },
@@ -324,6 +324,9 @@ class BlockingQueueProcessingModalMixin:
         if (event.type != 'TIMER'):
             return {'PASS_THROUGH'}
 
+        # call the 'queue_callback_modal' function, if exists
+        call_callback(self, context, callback_identifier='queue_callback_modal',)
+
         # Slow down processing to allow UI updates
         # that way blender UI have time to breathe.
         self._modal_timercount += 1
@@ -333,7 +336,7 @@ class BlockingQueueProcessingModalMixin:
 
         # Check if we are at the end of the queue
         if (self.q_task_idx >= self._tasks_count):
-            self.queue_sucessful_finish(context)
+            self.queue_sucessful(context)
             self.cleanup(context)
             return {'FINISHED'}
 
@@ -347,7 +350,7 @@ class BlockingQueueProcessingModalMixin:
         self.q_task_idx += 1
         return {'RUNNING_MODAL'}
 
-    def queue_sucessful_finish(self, context):
+    def queue_sucessful(self, context):
         """finish the queue."""
 
         self._allfinished = True
@@ -577,6 +580,7 @@ class BackgroundQueueProcessingModalMixin:
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][taskindex][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
+    #     'queue_callback_modal': <function>,       NOTE: This callback is called every modal timer event.
     #     'queue_callback_cancel': <function>,      NOTE: This callback is to be used to handle manual user cancellation.
     #     'queue_callback_fatalerror': <function>,  NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
     #  },
@@ -609,7 +613,7 @@ class BackgroundQueueProcessingModalMixin:
 
         return None
 
-    def collect_tasks(self, context) -> bool:
+    def collect_background_tasks(self, context) -> bool:
         """collect all independent functions to be executed and place them back into the queue. 
         return True if all worker functions were found, False if there was an error otherwise."""
 
@@ -625,7 +629,7 @@ class BackgroundQueueProcessingModalMixin:
                     valid_tasks_count += 1
 
         if (all_tasks_count != valid_tasks_count):
-            print(f"ERROR: {self._debugname}.collect_tasks(): Something went wrong. We couldn't import all the worker functions for your queue.")
+            print(f"ERROR: {self._debugname}.collect_background_tasks(): Something went wrong. We couldn't import all the worker functions for your queue.")
             return False
 
         self._tasks_count = valid_tasks_count
@@ -664,7 +668,7 @@ class BackgroundQueueProcessingModalMixin:
         try:            
 
             # create the function queue
-            succeeded = self.collect_tasks(context)
+            succeeded = self.collect_background_tasks(context)
             if (not succeeded):
                 self.cleanup(context)
                 return {'FINISHED'}
@@ -748,14 +752,15 @@ class BackgroundQueueProcessingModalMixin:
         if (event.type!='TIMER'):
             return {'PASS_THROUGH'}
 
-        # print("running")
+        # call the 'queue_callback_modal' function, if exists
+        call_callback(self, context, callback_identifier='queue_callback_modal',)
 
         # if a queue is empty, it means a task is waiting to be done!
         if (self._pool_result is None):
 
             # if we are at the end of the queue, we can finish the modal
             if (self.q_task_idx >= self._tasks_count):
-                self.queue_sucessful_finish(context)
+                self.queue_sucessful(context)
                 self.cleanup(context)
                 return {'FINISHED'}
 
@@ -798,7 +803,7 @@ class BackgroundQueueProcessingModalMixin:
 
         return {'PASS_THROUGH'}
 
-    def queue_sucessful_finish(self, context):
+    def queue_sucessful(self, context):
         """finish the queue."""
 
         self._allfinished = True
@@ -904,6 +909,7 @@ class ParallelQueueProcessingModalMixin:
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][taskid][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
+    #     'queue_callback_modal': <function>,       NOTE: This callback is called every modal timer event.
     #     'queue_callback_cancel': <function>,      NOTE: This callback is to be used to handle manual user cancellation.
     #     'queue_callback_fatalerror': <function>,  NOTE: This callback is to be used to handle fatal errors, errors that would cancel out the whole queue. (if this happens, 'queue_callback_post' will not be called)
     #  },
@@ -938,7 +944,7 @@ class ParallelQueueProcessingModalMixin:
         
         return None
 
-    def collect_tasks(self, context) -> bool:
+    def collect_parallel_tasks(self, context) -> bool:
         """collect all independent functions to be executed and place them back into the queue. 
         return True if all worker functions were found, False if there was an error otherwise."""
 
@@ -954,7 +960,7 @@ class ParallelQueueProcessingModalMixin:
                     valid_tasks_count += 1
 
         if (all_tasks_count != valid_tasks_count):
-            print(f"ERROR: {self._debugname}.collect_tasks(): Something went wrong. We couldn't import all the worker functions for your queue.")
+            print(f"ERROR: {self._debugname}.collect_parallel_tasks(): Something went wrong. We couldn't import all the worker functions for your queue.")
             return False
 
         self._tasks_count = valid_tasks_count
@@ -1032,7 +1038,7 @@ class ParallelQueueProcessingModalMixin:
         try:            
 
             # create the function queue
-            succeeded = self.collect_tasks(context)
+            succeeded = self.collect_parallel_tasks(context)
             if (not succeeded):
                 self.cleanup(context)
                 return {'FINISHED'}
@@ -1159,7 +1165,7 @@ class ParallelQueueProcessingModalMixin:
                 self._available_tasks.append(task_id)
                 debugprint(f"INFO: {self._debugname}.update_available_tasks(): Task{task_id} is now available (dependencies completed)")
 
-    def start_new_tasks(self, context) -> bool:
+    def start_new_parallel_tasks(self, context) -> bool:
         """Start new tasks if we have capacity and available tasks.
         Return True if no errors occurred, False otherwise."""
 
@@ -1180,10 +1186,13 @@ class ParallelQueueProcessingModalMixin:
         if (is_cancel_request):
             self.cleanup(context)
             return {'FINISHED'}
-
+    
         # Check if processing is complete
         if (event.type!='TIMER'):
             return {'PASS_THROUGH'}
+
+        # call the 'queue_callback_modal' function, if exists
+        call_callback(self, context, callback_identifier='queue_callback_modal',)
 
         # Check for completed tasks and handle results
         succeeded = self.check_completed_tasks(context)
@@ -1192,20 +1201,20 @@ class ParallelQueueProcessingModalMixin:
             return {'FINISHED'}
 
         # Start new tasks if possible
-        succeeded = self.start_new_tasks(context)
+        succeeded = self.start_new_parallel_tasks(context)
         if (not succeeded):
             self.cleanup(context)
             return {'FINISHED'}
 
         # Check if all tasks are completed
         if (len(self._completed_tasks) >= self._tasks_count):
-            self.queue_sucessful_finish(context)
+            self.queue_sucessful(context)
             self.cleanup(context)
             return {'FINISHED'}
 
         return {'PASS_THROUGH'}
 
-    def queue_sucessful_finish(self, context):
+    def queue_sucessful(self, context):
         """finish the queue."""
 
         self._allfinished = True
@@ -1558,6 +1567,8 @@ def finalize_parallel_tasks(results):
     if results=='Cancelled':
         update_message('ex3', f"Cancelled..")    
         tag_redraw_all()
+        global PARALLEL_TASK_STATUS
+        PARALLEL_TASK_STATUS = {}
         return None    
     update_message('ex3', f"All {len(results)} parallel tasks completed successfully!")
     tag_redraw_all()
