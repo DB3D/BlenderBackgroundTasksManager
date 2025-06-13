@@ -96,6 +96,7 @@ def call_callback(self, context, callback_identifier:str=None, task_id:int=None)
     if (callback_identifier not in {
             'task_callback_post',
             'task_callback_pre',
+            'task_callback_error',
             'queue_callback_pre',
             'queue_callback_modal',
             'queue_callback_post',
@@ -196,7 +197,8 @@ class BlockingQueueProcessingModalMixin:
     #         'task_fn_blocking': <function>,                  NOTE: Define the blocking function to execute (can have access to bpy). Expect self as first argument! always!
     #         'task_result': <tuple:private>,                  NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
     #         'task_callback_pre': <function>,                 NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
-    #         'task_callback_post': <function>,  
+    #         'task_callback_post': <function>,                NOTE: The function to call after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
+    #         'task_callback_error': <function>,               NOTE: The function to call in case of error. args are: (self, context,). Shall return None. 
     #     },                    
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][taskindex][..]) if needed.
@@ -292,7 +294,12 @@ class BlockingQueueProcessingModalMixin:
 
             # Execute the function directly (blocking)
             debugprint(f"INFO: {self._debugname}.call_blocking_task(): Executing Task{self.q_task_idx}...")
-            result = taskfunc(self, *resolved_args, **resolved_kwargs)
+            try:
+                result = taskfunc(self, *resolved_args, **resolved_kwargs)
+            except Exception as e:
+                print(f"ERROR: {self._debugname}.call_blocking_task(): Error executing task{self.q_task_idx}: {e}")
+                call_callback(self, context, callback_identifier='task_callback_error', task_id=self.q_task_idx,)
+                raise e
 
             # Ensure result is always stored as a tuple for consistent indexing
             if (not isinstance(result, tuple)):
@@ -574,9 +581,10 @@ class BackgroundQueueProcessingModalMixin:
     #                                                                the function must be pickleable and found on module top level!
     #         'task_fn_worker': <function:private>,            NOTE: We'll import and add the function to this emplacement. Just set it to None!
     #         'task_result': <tuple:private>,                  NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
-    #         'task_callback_pre': <function>,                 NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
+    #         'task_callback_pre': <function>,                 NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre/error. Shall return None. 
     #         'task_callback_post': <function>,                      callbacks will never execute in background, it will be called in the main thread. 
-    #     },                                                         therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #         'task_callback_error': <function>,                     therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #         },
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][taskindex][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
@@ -777,13 +785,15 @@ class BackgroundQueueProcessingModalMixin:
 
             if (not self._async_result.successful()):
                 print(f"ERROR: {self._debugname}.modal(): Task{self.q_task_idx} worker function ran into an Error..")
-                try: self._async_result.get() #this line will cause an exception we use to pass the message in console..
+                try:
+                    self._async_result.get() #this line will cause an exception we use to pass the message in console..
                 except Exception as e:
                     print(f"  Error: '{e}'")
                     print(f"  Full Traceback:")
                     print("-"*100)
                     traceback.print_exc()
                     print("-"*100)
+                call_callback(self, context, callback_identifier='task_callback_error', task_id=self.q_task_idx,)
                 self.cleanup(context)
                 return {'FINISHED'}
 
@@ -903,9 +913,10 @@ class ParallelQueueProcessingModalMixin:
     #                                                                the function must be pickleable and found on module top level!
     #         'task_fn_worker': <function:private>,            NOTE: We'll import and add the function to this emplacement. Just set it to None!
     #         'task_result': <tuple:private>,                  NOTE: Once the function is finished, we'll catch the result and place it here. the result will always be a tuple!
-    #         'task_callback_pre': <function>,                 NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre. Shall return None. 
+    #         'task_callback_pre': <function>,                 NOTE: The function to call before or after the task. args are: (self, context, result) for post and (self, context) for pre/error. Shall return None. 
     #         'task_callback_post': <function>,                      callbacks will never execute in background, it will be called in the main thread. 
-    #     },                                                         therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #         'task_callback_error': <function>,                     therefore it will block blender UI, but give access to bpy, letting you bridge your background process with blender (ex updating an interface).
+    #     },
     #      NOTE: More optional callbacks! signature: (self, context) & return None. 'queue_callback_post' get an additional argument: results_dict, a dict of all the results of the tasks. key is the task index
     #     'queue_callback_pre': <function>,         NOTE: This callback could be used to build tasks via self (self.queues[self.queue_identifier][taskid][..]) if needed.
     #     'queue_callback_post': <function>,        NOTE: This callback is to be used to handle the queue after it has been successfully executed.
@@ -1118,6 +1129,7 @@ class ParallelQueueProcessingModalMixin:
                     print("-"*100)
                     traceback.print_exc()
                     print("-"*100)
+                call_callback(self, context, callback_identifier='task_callback_error', task_id=task_id,)
                 return False
             
             # Store the result
