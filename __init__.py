@@ -598,13 +598,13 @@ class BackgroundQueueProcessingModalMixin:
             debugprint(f"WARNING:' {queue_identifier}' not found in {cls.__name__}.queues")
             return False
         return (queue_identifier in cls.runningidentifiers)
-        
+
     def initialize_variables(self):
         """Initialize the operator state variables"""
 
         self._debugname = self.__class__.bl_idname
         self._modal_timer = None #the modal timer item, important for tracking the currently running background task.
-        self._pool_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
+        self._async_result = None #the results currently being awaited for the task being processed. the return value of Pool.map_async()
         self._tasks_count = 0 #the number of tasks in the queue, indicated by the number of tasks indexes (starting at 0).
         self._allfinished = False #flag to check if the queue was successfully finished.
 
@@ -708,7 +708,7 @@ class BackgroundQueueProcessingModalMixin:
             resolved_kwargs = resolve_params_notation(self,kwargs) if kwargs else {}
 
             # Use apply_async instead of map_async - it handles multiple args and kwargs naturally
-            self._pool_result = MULTIPROCESSING_POOL.apply_async(taskfunc, resolved_args, resolved_kwargs)
+            self._async_result = MULTIPROCESSING_POOL.apply_async(taskfunc, resolved_args, resolved_kwargs)
 
             debugprint(f"INFO: {self._debugname}.start_background_task(): Task{self.q_task_idx} started!")
             return True
@@ -723,7 +723,7 @@ class BackgroundQueueProcessingModalMixin:
         return True if the result was stored successfully, False otherwise."""
 
         try:
-            result = self._pool_result.get()
+            result = self._async_result.get()
 
             # Ensure result is always stored as a tuple for consistent indexing
             if (not isinstance(result, tuple)):
@@ -756,7 +756,7 @@ class BackgroundQueueProcessingModalMixin:
         call_callback(self, context, callback_identifier='queue_callback_modal',)
 
         # if a queue is empty, it means a task is waiting to be done!
-        if (self._pool_result is None):
+        if (self._async_result is None):
 
             # if we are at the end of the queue, we can finish the modal
             if (self.q_task_idx >= self._tasks_count):
@@ -773,11 +773,11 @@ class BackgroundQueueProcessingModalMixin:
             return {'PASS_THROUGH'}
 
                 # do we have a task finished? get the results
-        if (self._pool_result.ready()):
+        if (self._async_result.ready()):
 
-            if (not self._pool_result.successful()):
+            if (not self._async_result.successful()):
                 print(f"ERROR: {self._debugname}.modal(): Task{self.q_task_idx} worker function ran into an Error..")
-                try: self._pool_result.get() #this line will cause an exception we use to pass the message in console..
+                try: self._async_result.get() #this line will cause an exception we use to pass the message in console..
                 except Exception as e:
                     print(f"  Error: '{e}'")
                     print(f"  Full Traceback:")
@@ -797,7 +797,7 @@ class BackgroundQueueProcessingModalMixin:
 
             # set up environement for the next task
             self.q_task_idx += 1
-            self._pool_result = None
+            self._async_result = None
 
             return {'PASS_THROUGH'}
 
@@ -841,8 +841,8 @@ class BackgroundQueueProcessingModalMixin:
             cls.cancelrequests.remove(self.queue_identifier)
 
         #remove result
-        if (self._pool_result):
-            self._pool_result = None
+        if (self._async_result):
+            self._async_result = None
 
         # reset counters & idx's
         self.q_task_idx = 0
@@ -1383,14 +1383,22 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
         "another_background_tasks" : {
             #define queue tasks
             0: {
+                'task_modu_name': "another_test.py",
+                'task_pos_args': [0,],
+                'task_kw_args': {},
+                'task_fn_name': "my_looong_task",
+                'task_callback_pre': lambda self, context: update_message('ex22',"StartingLoong2.."),
+                'task_callback_post': lambda self, context, result: update_message('ex22',"Was Very Loooong!"),
+            },
+            1: {
                 'task_modu_name': "my_standalone_worker.py",
                 'task_pos_args': [2,],
                 'task_kw_args': {},
                 'task_fn_name': "mytask",
-                'task_callback_pre': lambda self, context: update_message('ex22',"Starting2.."),
+                'task_callback_pre': lambda self, context: update_message('ex22',"StartingRest2.."),
                 'task_callback_post': lambda self, context, result: update_message('ex22',"Very Nice2!"),
             },
-            1: {
+            2: {
                 'task_modu_name': "my_standalone_worker.py",
                 'task_pos_args': ['USE_TASK_RESULT|0|0',], #Use result from task 0, result[0]
                 'task_kw_args': {"printhis": "Hello There!"},
@@ -1398,7 +1406,7 @@ class MULTIPROCESS_OT_mybackgroundqueue(BackgroundQueueProcessingModalMixin, bpy
                 'task_callback_pre': lambda self, context: update_message('ex22',"King of2?"),
                 'task_callback_post': lambda self, context, result: update_message('ex22',"King of the Castle2!"),
             },
-            2: {
+            3: {
                 'task_modu_name': "another_test.py",
                 'task_pos_args': ['USE_TASK_RESULT|1|0',],  #Use result from task 1, result[0]
                 'task_kw_args': {},
