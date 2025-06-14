@@ -244,8 +244,8 @@ class BlockingQueueProcessingModalMixin:
         
         # Check if we are able to run another instance of this class..
         if cls.is_running(self.queue_identifier):
-            print(f"WARNING: modal operator '{self.__name__}' of identifier '{self.queue_identifier}' is already running!")
-            return None
+            print(f"WARNING: modal operator '{cls.__name__}' of identifier '{self.queue_identifier}' is already running!")
+            return {'FINISHED'}
         cls.runningidentifiers.append(self.queue_identifier) # define a new running identifier. In order to is_running() to work properly..
 
         # Initialize state variables
@@ -655,8 +655,8 @@ class BackgroundQueueProcessingModalMixin:
 
         # Check if we are able to run another instance of this class..
         if cls.is_running(self.queue_identifier):
-            print(f"WARNING: modal operator '{self.__name__}' of identifier '{self.queue_identifier}' is already running!")
-            return None
+            print(f"WARNING: modal operator '{cls.__name__}' of identifier '{self.queue_identifier}' is already running!")
+            return {'FINISHED'}
         cls.runningidentifiers.append(self.queue_identifier) # define a new running identifier. In order to is_running() to work properly..
 
         # Initialize state variables
@@ -1028,8 +1028,8 @@ class ParallelQueueProcessingModalMixin:
 
         # Check if we are able to run another instance of this class..
         if cls.is_running(self.queue_identifier):
-            print(f"WARNING: modal operator '{self.__name__}' of identifier '{self.queue_identifier}' is already running!")
-            return None
+            print(f"WARNING: modal operator '{cls.__name__}' of identifier '{self.queue_identifier}' is already running!")
+            return {'FINISHED'}
         cls.runningidentifiers.append(self.queue_identifier) # define a new running identifier. In order to is_running() to work properly..
 
         # Initialize state variables
